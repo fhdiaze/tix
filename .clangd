@@ -1,0 +1,10 @@
+CompileFlags:
+    Add: [-std=c23, -Wall, -Werror, -xc, -Wextra, -Wsign-compare]
+InlayHints:
+  BlockEnd: false
+  Designators: true
+  Enabled: true
+  ParameterNames: false
+  DeducedTypes: true
+  DefaultArguments: false
+  TypeNameLimit: 24
