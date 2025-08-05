@@ -6,4 +6,4 @@
 -xc
 -fuse-ld=lld
 -pedantic
--I./src/lib
+-I./include

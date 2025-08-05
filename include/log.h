@@ -44,6 +44,7 @@
     if (LOG_LEVEL <= LOG_LEVEL_ERROR)                                          \
       printf("[ERROR] " __VA_ARGS__);                                          \
   } while (0)
+
 #define logf(...)                                                              \
   do {                                                                         \
     if (LOG_LEVEL <= LOG_LEVEL_FATAL)                                          \
