@@ -1,0 +1,9 @@
+-std=c23
+-Wall
+-Werror
+-Wextra
+-Wsign-compare
+-xc
+-fuse-ld=lld
+-pedantic
+-I./src/lib

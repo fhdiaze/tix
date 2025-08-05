@@ -10,22 +10,18 @@ if (!(Test-Path $SourceFile)) {
 
 # Get the base filename without extension
 $base = [System.IO.Path]::GetFileNameWithoutExtension($SourceFile)
-$outdir = ".\target"
+$outdir = ".\bin"
 if (!(Test-Path $outdir)) {
     New-Item -ItemType Directory -Path $outdir | Out-Null
 }
 
 $output = Join-Path $outdir "$base.exe"
 
-$flags = @()
-$flags += "-std=c23"
-$flags += "-Wall"
-$flags += "-Werror"
-$flags += "-Wextra"
-$flags += "-Wsign-compare"
-$flags += "-xc"
-$flags += "-fuse-ld=lld"
-$flags += "-pedantic"
+# Read flags from file
+$flags = Get-Content "compile_flags.txt" |
+    Where-Object { $_.Trim() -ne "" -and -not $_.StartsWith("//") } |
+    ForEach-Object { $_.Trim().TrimEnd(',') } |
+    Where-Object { $_ -ne "" }
 #$flags += "-fsanitize=address"
 #$flags += "-o0"
 
