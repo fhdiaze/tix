@@ -1,3 +1,6 @@
+#ifndef LOG_H
+#define LOG_H
+
 #define LOG_LEVEL_ALL INT_MIN
 #define LOG_LEVEL_TRACE 0
 #define LOG_LEVEL_DEBUG 1
@@ -50,3 +53,5 @@
     if (LOG_LEVEL <= LOG_LEVEL_FATAL)                                          \
       printf("[FATAL] " __VA_ARGS__);                                          \
   } while (0)
+
+#endif

@@ -6,4 +6,5 @@
 -xc
 -fuse-ld=lld
 -pedantic
+-xc-header
 -I./include
