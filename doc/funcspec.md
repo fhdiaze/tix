@@ -1,11 +1,24 @@
 # Functional Specification
 
-## Rules
+## Overview
 
-- Based on modes
+### Rules
+
+- It should be blazingly fast
+- All the UI should be text like
+- Based on vim modes
 - The screen space should be optimized.
 - Keyboard navigation first, mouse navigation second.
+  - vim everywhere, vim first
 - All the UI element are vim-like.
+- All the elements should keep the same font size
+- Consistent font size
+
+## Scenarios
+
+### Scenario 1
+
+
 
 ## Docks
 
@@ -22,8 +35,19 @@
       - mode
       -
 - All the docks are based on tabs
-- The tabs are showed vertically
+- The tabs of the active dock are showed on the title bar.
 - docks could be hide
-- Just the main dock could be splited.
+- Just the main dock could be split.
 - There is a picker for the tabs in a dock
 - Tabs can be pinned to a dock
+
+## Navigation
+
+## Modes
+
+### normal mode
+- Tab should move the cursor like in a grid: increasing column first
+
+### visual mode
+
+### insert mode
