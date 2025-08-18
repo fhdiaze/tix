@@ -2,23 +2,23 @@
 
 ## Overview
 
-### Rules
+tix has the next values:
 
-- It should be blazingly fast
+- Correctness is the most important feature
+- Speed is the second most important feature
+- Low Memory footprint but speed first
 - All the UI should be text like
 - Based on vim modes
 - The screen space should be optimized.
 - Keyboard navigation first, mouse navigation second.
   - vim everywhere, vim first
-- All the UI element are vim-like.
+  - All the UI element are vim-like.
 - All the elements should keep the same font size
-- Consistent font size
+- Fuzzy matching for autocomplete
 
 ## Scenarios
 
 ### Scenario 1
-
-
 
 ## Docks
 
@@ -41,13 +41,27 @@
 - There is a picker for the tabs in a dock
 - Tabs can be pinned to a dock
 
+## Actions
+
+- Command palette: a picker
+- Command prompt/pad:
+
+## Pickers
+
+- Just on picker: command prefix # for file, @ for fzf, etc
+
 ## Navigation
 
 ## Modes
 
 ### normal mode
+
 - Tab should move the cursor like in a grid: increasing column first
 
 ### visual mode
 
 ### insert mode
+
+### visual block mode
+
+### multi selection mode

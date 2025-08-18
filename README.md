@@ -1,4 +1,5 @@
 # tix
+
 tix is a text editor written in c
 
 ## Fun
@@ -13,5 +14,9 @@ tix is a text editor written in c
 - Plugin architecture
 
 - Separate state from actions
-    - state: line, filename, column, modified, active_element, capabilities
-    - actions: save, move, delete, etc
+  - state: line, filename, column, modified, active_element, capabilities
+  - actions: save, move, delete, etc
+
+## Inspired by
+
+- https://kakoune.org/why-kakoune/why-kakoune.html

@@ -3,8 +3,6 @@
 -Werror
 -Wextra
 -Wsign-compare
--xc
 -fuse-ld=lld
 -pedantic
--xc-header
 -I./include
