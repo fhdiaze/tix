@@ -2,7 +2,7 @@
 
 ## Overview
 
-tix has the next values:
+tix is an text editor focused on editing code in any programming language. has the next values:
 
 - Correctness is the most important feature
 - Speed is the second most important feature
@@ -18,7 +18,16 @@ tix has the next values:
 
 ## Scenarios
 
-### Scenario 1
+### Scenario 1: Carlos
+Carlos has not experience with vim or mode-based editors.
+
+### Scenario 2: Andrew
+Andrew has extended experience with neovim.
+
+## Non Goals
+
+This editor will not support
+- Scripting language for extensions
 
 ## Docks
 
