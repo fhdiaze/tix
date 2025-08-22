@@ -8,7 +8,7 @@
 #undef LOG_LEVEL
 #define LOG_LEVEL LOG_LEVEL_ALL
 
-int main(int const argc, char const *const argv[argc + 1]) {
+int main(int const argc, char const *const argv[static argc + 1]) {
     if (argc < 2) {
         logf("tix needs a file to be open\n");
         exit(EXIT_FAILURE);
@@ -17,7 +17,7 @@ int main(int const argc, char const *const argv[argc + 1]) {
     logt("Starting the editor\n");
 
     char const *filename = argv[1];
-    FILE *file = fopen(filename, "r");
+    FILE *file = fopen(filename, "re");
     if (file == NULL) {
         logf("The file %s could not be open\n", filename);
         exit(EXIT_FAILURE);
