@@ -2,19 +2,16 @@
 
 ## Overview
 
-tix is an text editor focused on editing code in any programming language. has the next values:
+tix is an text editor focused on editing code in any programming language. It has the next values in order of importance:
 
-- Correctness is the most important feature
-- Speed is the second most important feature
-- Low Memory footprint but speed first
+- Correctness
+- Speed
+- Low Memory footprint
 - All the UI should be text like
-- Based on vim modes
+    - Keyboard navigation first, mouse navigation second.
+    - Based on vim modes: vim everywhere, vim first
 - The screen space should be optimized.
-- Keyboard navigation first, mouse navigation second.
-  - vim everywhere, vim first
-  - All the UI element are vim-like.
 - All the elements should keep the same font size
-- Fuzzy matching for autocomplete
 
 ## Scenarios
 
@@ -29,20 +26,23 @@ Andrew has extended experience with neovim.
 This editor will not support
 - Scripting language for extensions
 
-## Docks
+## Screen
+
+### Docks
 
 - The editor has the next visual blocks
   - Three docks:
-    - Main dock: the files are open here.
-    - Side dock: for the file tree and other tools
-    - Bottom dock: for the terminal.
+    - Main dock(mdock): the files are open here.
+    - Right dock(rdock): for the file tree and other tools
+    - Bottom dock(bdock): for the terminal.
   - One title bar
     - menu
     - tabs for the active dock
     - root folder name
     - status icons
       - mode
-      -
+  - Command pad: you see the command to be executed in on line
+  - Picker: a pop up with a search area
 - All the docks are based on tabs
 - The tabs of the active dock are showed on the title bar.
 - docks could be hide
@@ -53,11 +53,14 @@ This editor will not support
 ## Actions
 
 - Command palette: a picker
-- Command prompt/pad:
+- Command prompt/pad: you can run the commands
 
 ## Pickers
 
-- Just on picker: command prefix # for file, @ for fzf, etc
+- Just one picker with prefixes:
+  - File: <no prefix>
+  - Command: >
+  - Fzf: @
 
 ## Navigation
 
@@ -65,7 +68,12 @@ This editor will not support
 
 ### normal mode
 
-- Tab should move the cursor like in a grid: increasing column first
+- among docks: Tab should move the cursor like in a grid: increasing column first
+- inside docks:
+    - tab move the cursor like in a grid between elements: increasing column first
+    - follow vim conventions: l move right, k move up, j move down, h move left
+- buffer:
+    - follow vim conventions: l move right, k move up, j move down, h move left
 
 ### visual mode
 

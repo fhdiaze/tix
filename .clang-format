@@ -5,3 +5,5 @@ IndentWidth: 4
 Language: C
 ColumnLimit: 180
 InsertNewlineAtEOF: true
+PointerAlignment: Right
+QualifierAlignment: Left

@@ -1,14 +1,21 @@
-#define _CRT_SECURE_NO_WARNINGS
-
+#include "config.h"
 #include "log.h"
-#include <corecrt_search.h>
 #include <stdio.h>
 #include <stdlib.h>
 
 #undef LOG_LEVEL
 #define LOG_LEVEL LOG_LEVEL_ALL
 
-int main(int const argc, char const *const argv[static argc + 1]) {
+typedef enum Tix_Mode { tm_normal = 0, tm_view = 1 } Tix_Mode;
+
+typedef struct Tix_State {
+    Tix_Mode tix_mode;
+    char *tix_Path;
+    size_t tix_line;
+    size_t tix_column;
+} Tix_State;
+
+int main(const int argc, const char *const argv[static argc + 1]) {
     if (argc < 2) {
         logf("tix needs a file to be open\n");
         exit(EXIT_FAILURE);
@@ -16,11 +23,11 @@ int main(int const argc, char const *const argv[static argc + 1]) {
 
     logt("Starting the editor\n");
 
-    char const *filename = argv[1];
+    const char *filename = argv[1];
     FILE *file = fopen(filename, "re");
     if (file == NULL) {
         logf("The file %s could not be open\n", filename);
-        exit(EXIT_FAILURE);
+        return EXIT_FAILURE;
     }
 
     char line[1000];
@@ -29,6 +36,17 @@ int main(int const argc, char const *const argv[static argc + 1]) {
     logi("Read line: %s", line);
 
     fclose(file);
+
+    constexpr int QUIT_CHAR = 'q';
+    int c = getchar();
+
+    while (c != EOF) {
+        if (c == QUIT_CHAR) {
+            break;
+        }
+
+        c = getchar();
+    }
 
     return EXIT_SUCCESS;
 }
