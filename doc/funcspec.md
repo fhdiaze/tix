@@ -82,3 +82,7 @@ This editor will not support
 ### visual block mode
 
 ### multi selection mode
+
+## Autocomplete
+
+- Fuzzy matching for autocomplete

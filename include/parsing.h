@@ -1,8 +1,4 @@
-// clang-format Language: C
-
-/*
-Parsing
-*/
+// Parsing
 
 // structure: tree, lines
 // primitives: chars

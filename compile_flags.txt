@@ -6,3 +6,4 @@
 -fuse-ld=lld
 -pedantic
 -I./include
+-D_CRT_SECURE_NO_WARNINGS
