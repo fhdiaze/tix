@@ -32,9 +32,7 @@ int main(const int argc, const char *const argv[static argc + 1])
         int c = getchar();
 
         while (c != EOF) {
-                if (c == QUIT_CHAR) {
-                        break;
-                }
+                if (c == QUIT_CHAR) { break; }
 
                 c = getchar();
         }

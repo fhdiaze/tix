@@ -8,3 +8,8 @@ PointerAlignment: Right
 QualifierAlignment: Left
 AlignEscapedNewlines: Left
 BreakBeforeBraces: Linux
+AllowShortBlocksOnASingleLine: Always
+BinPackArguments: true
+BinPackParameters: true
+AlignAfterOpenBracket: Align
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
