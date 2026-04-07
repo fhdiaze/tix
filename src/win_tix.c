@@ -1,9 +1,20 @@
 #include "log.h"
+#include <minwindef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <windows.h>
 
 #undef LOG_LEVEL
 #define LOG_LEVEL LOG_LEVEL_ALL
+
+int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
+                     LPSTR lpCmdLine, int nCmdShow)
+{
+        logi("%p", (void *)hInstance);
+        logi("%p", (void *)hPrevInstance);
+        logi("%p", (void *)lpCmdLine);
+        logi("%d", nCmdShow);
+}
 
 int main(const int argc, const char *const argv[static argc + 1])
 {
