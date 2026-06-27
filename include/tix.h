@@ -10,3 +10,8 @@ typedef struct {
 } TixState;
 
 extern void tix_editor_init(void);
+
+// Parsing
+
+// structure: tree, lines
+// primitives: chars

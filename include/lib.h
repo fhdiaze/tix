@@ -1,0 +1,452 @@
+// clang-format Language: C
+
+#ifndef LIB_H
+#define LIB_H
+
+#include <assert.h>
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h> // IWYU pragma: keep
+#include <time.h>
+
+// =============================================================================
+// Memory
+// =============================================================================
+
+#define KB_TO_BYTES(_pr_v) ((_pr_v) * 1024)
+#define MB_TO_BYTES(_pr_v) (KB_TO_BYTES(_pr_v) * 1024)
+#define GB_TO_BYTES(_pr_v) (MB_TO_BYTES(_pr_v) * 1024)
+#define TB_TO_BYTES(_pr_v) (GB_TO_BYTES(_pr_v) * 1024)
+
+typedef struct Arena {
+	size_t capacity_byte;
+	unsigned char *base_address;
+	size_t used_byte;
+} Arena;
+
+void arena_init(Arena *restrict arena, const size_t size, unsigned char *const restrict base)
+{
+	arena->capacity_byte = size;
+	arena->base_address = base;
+	arena->used_byte = 0;
+}
+
+void *arena_push_size(Arena *arena, size_t size)
+{
+	assert(arena->used_byte + size <= arena->capacity_byte);
+
+	void *result = arena->base_address + arena->used_byte;
+	arena->used_byte += size;
+
+	return result;
+}
+
+void *arena_push_array(Arena *arena, size_t count, size_t size)
+{
+	void *result = arena_push_size(arena, count * size);
+
+	return result;
+}
+
+// =============================================================================
+// Logging
+// =============================================================================
+
+#define LIB_LOG_TSTAMP_BUF_SIZE 32
+#define LIB_LOG_LEVEL_ALL 0UL
+#define LIB_LOG_LEVEL_TRACE 1UL
+#define LIB_LOG_LEVEL_DEBUG 2UL
+#define LIB_LOG_LEVEL_INFO 3UL
+#define LIB_LOG_LEVEL_WARN 4UL
+#define LIB_LOG_LEVEL_ERROR 5UL
+#define LIB_LOG_LEVEL_FATAL 6UL
+#define LIB_LOG_LEVEL_OFF 7UL
+
+// Defines what is the minimum priority of a message to be logged.
+// Anything with higher priority is going to be logged.
+#ifndef LIB_LOG_LEVEL
+#define LIB_LOG_LEVEL LIB_LOG_LEVEL_ALL
+#endif // LIB_LOG_LEVEL
+
+#define STRINGIFY(n) #n
+#define STRGY(n) STRINGIFY(n)
+
+#if DEBUG
+#define LIB_LOG_WRITE(fmt, ...)                                                      \
+	do {                                                                         \
+		FILE *_pr_log_file = fopen("log.txt", "a+");                         \
+		if (_pr_log_file != nullptr) {                                       \
+			(void)fprintf(_pr_log_file, fmt __VA_OPT__(, ) __VA_ARGS__); \
+			(void)fclose(_pr_log_file);                                  \
+		}                                                                    \
+	} while (false)
+#else
+#define LIB_LOG_WRITE(fmt, ...) printf(fmt __VA_OPT__(, ) __VA_ARGS__)
+#endif
+
+#define LIB_LOG_MSG(log_level, fmt, file_name, func_name, line_number, ...)                                   \
+	do {                                                                                                  \
+		char _pr_tstamp_str[LIB_LOG_TSTAMP_BUF_SIZE];                                                 \
+		struct timespec _pr_ts;                                                                       \
+		struct tm _pr_tm;                                                                             \
+                                                                                                              \
+		if (!timespec_get(&_pr_ts, TIME_UTC)) {                                                       \
+			break;                                                                                \
+		}                                                                                             \
+		if (gmtime_s(&_pr_tm, &_pr_ts.tv_sec)) {                                                      \
+			break;                                                                                \
+		}                                                                                             \
+		if (strftime(_pr_tstamp_str, LIB_LOG_TSTAMP_BUF_SIZE, "%FT%T", &_pr_tm) == 0) {               \
+			break;                                                                                \
+		}                                                                                             \
+                                                                                                              \
+		LIB_LOG_WRITE("%c[%s.%09ldZ] %s:%s:%s: " fmt "\n", log_level, _pr_tstamp_str, _pr_ts.tv_nsec, \
+		              file_name, func_name, STRGY(line_number) __VA_OPT__(, ) __VA_ARGS__);           \
+	} while (false)
+
+#define LIB_LOG_MSG_NOOP(...) ((void)0)
+
+// Logs a trace message if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_TRACE
+// Usage: LIB_LOGD("Log trace: x=%d", x);
+#if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_TRACE
+#define LIB_LOGT(fmt, ...) LIB_LOG_MSG('T', fmt, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#else
+#define LIB_LOGT(fmt, ...) LIB_LOG_MSG_NOOP()
+#endif // logt
+
+// Logs a debug message if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_DEBUG.
+// Usage: LIB_LOGD("log debug: x=%d", x);
+#if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_DEBUG
+#define LIB_LOGD(fmt, ...) LIB_LOG_MSG('D', fmt, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#else
+#define LIB_LOGD(fmt, ...) LIB_LOG_MSG_NOOP()
+#endif // LIB_LOGD
+
+// Logs an information message if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_INFO
+// Usage: LIB_LOGI("Log info: x=%d", x);
+#if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_INFO
+#define LIB_LOGI(fmt, ...) LIB_LOG_MSG('I', fmt, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#else
+#define LIB_LOGI(fmt, ...) LIB_LOG_MSG_NOOP()
+#endif // LIB_LOGI
+
+// Logs a warning message if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_WARN
+// Usage: LIB_LOGW("Log warn: x=%d", x);
+#if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_WARN
+#define LIB_LOGW(fmt, ...) LIB_LOG_MSG('W', fmt, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#else
+#define LIB_LOGW(fmt, ...) LIB_LOG_MSG_NOOP()
+#endif // LIB_LOGW
+
+// Logs an error message if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_ERROR
+// Usage: LIB_LOGE("Log error: x=%d", x);
+#if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_ERROR
+#define LIB_LOGE(fmt, ...) LIB_LOG_MSG('E', fmt, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#else
+#define LIB_LOGE(fmt, ...) LIB_LOG_MSG_NOOP()
+#endif // LIB_LOGE
+
+// Logs a fatal message if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_FATAL
+// Usage: LIB_LOGF("Log fatal: x=%d", x);
+#if LIB_LOG_LEVEL <= LIB_LOG_LEVEL_FATAL
+#define LIB_LOGF(fmt, ...) LIB_LOG_MSG('F', fmt, __FILE__, __func__, __LINE__, __VA_ARGS__)
+#else
+#define LIB_LOGF(fmt, ...) LIB_LOG_MSG_NOOP()
+#endif // LIB_LOGF
+
+// =============================================================================
+// String
+// =============================================================================
+
+void string_concat(const size_t one_count, const char *const restrict one, const size_t other_count,
+                   const char *const restrict other, const size_t destsize, char *const restrict dest)
+{
+	for (unsigned i = 0; i < one_count; ++i) {
+		dest[i] = one[i];
+	}
+
+	for (unsigned i = 0; i < other_count; ++i) {
+		dest[one_count + i] = other[i];
+	}
+
+	dest[one_count + other_count] = '\0';
+}
+
+// =============================================================================
+// Bit operations
+// =============================================================================
+
+typedef struct CtzResult {
+	uint32_t count;
+	uint8_t was_found;
+} CtzResult;
+
+/**
+ * @brief Count trailing zeroes - returns the index of the first least-significant non-zero bit if there is one.
+ *
+ * @param value
+ * @param index
+ * @return BitScanResult .index = number of trailing zeroes, .was_found = 1 if a non-zero bit was found,
+ * otherwise .was_found = 0
+ */
+CtzResult uint_ctz(uint32_t value)
+{
+	CtzResult result = {};
+
+#if LIB_COMPILER_MSVC
+	unsigned long ctz_tmp = 0;
+	result.was_found = _BitScanForward(&ctz_tmp, value);
+	result.count = ctz_tmp;
+#elif LIB_COMPILER_LLVM
+	if (value != 0U) {
+		result.was_found = 1U;
+		result.index = (unsigned long)__builtin_ctz(value);
+	}
+#else
+	for (uint8_t test = 0; test < 32; ++test) {
+		if (value & (1U << test)) {
+			result.was_found = 1U;
+			result.index = test;
+
+			break;
+		}
+	}
+#endif
+
+	return result;
+}
+
+/**
+ * @brief Rotates the bits of @p value to the left by @p shift positions
+ *
+ * @param value The 32-bit value to rotate
+ * @param shift The number of bit positions to rotate left (0-31)
+ * @return uint32_t @p value with its bits rotated left by @p shift
+ *
+ * @example
+ * uint32_t r = uint_rotl(0x00000001U, 1);  // 0x00000002
+ * uint32_t r = uint_rotl(0x80000000U, 1);  // 0x00000001
+ */
+uint32_t uint_rotl(uint32_t value, int32_t shift)
+{
+	uint32_t result = _rotl(value, shift);
+
+	return result;
+}
+
+// =============================================================================
+// Vector math
+// =============================================================================
+
+/**
+ * @brief Vector in plane
+ */
+typedef union Vtwo {
+	struct {
+		float x;
+		float y;
+	};
+	float e[2];
+} Vtwo;
+
+/**
+ * @brief Flips a vector in the x axis (inverts its x coordinate)
+ *
+ * @param a The vector to flip
+ * @return Vtwo The flipped vector (-a.x, a.y)
+ *
+ * @example
+ * Vtwo v = {3.0f, 4.0f};
+ * Vtwo flipped = vtwo_flip_x(v);  // {-3.0f, 4.0f}
+ */
+inline Vtwo vtwo_flip_x(Vtwo a)
+{
+	Vtwo result = {
+		.x = a.x,
+		.y = -a.y,
+	};
+
+	return result;
+}
+
+/**
+ * @brief Flips a vector in the y axis (inverts its y coordinate)
+ *
+ * @param a The vector to flip
+ * @return Vtwo The flipped vector (a.x, -a.y)
+ *
+ * @example
+ * Vtwo v = {3.0f, 4.0f};
+ * Vtwo flipped = vtwo_flip_y(v);  // {3.0f, -4.0f}
+ */
+inline Vtwo vtwo_flip_y(Vtwo a)
+{
+	Vtwo result = {
+		.x = a.x,
+		.y = -a.y,
+	};
+
+	return result;
+}
+
+/**
+ * @brief Negates a vector (inverts its direction)
+ *
+ * @param a The vector to negate
+ * @return Vtwo The negated vector (-a.x, -a.y)
+ *
+ * @example
+ * Vtwo v = {3.0f, 4.0f};
+ * Vtwo neg = vtwo_inv(v);  // {-3.0f, -4.0f}
+ */
+inline Vtwo vtwo_neg(Vtwo a)
+{
+	Vtwo result = {
+		.x = -a.x,
+		.y = -a.y,
+	};
+
+	return result;
+}
+
+/**
+ * @brief Adds two vectors
+ *
+ * @param a The first vector
+ * @param b The second vector
+ * @return Vtwo The sum of a and b (a.x + b.x, a.y + b.y)
+ *
+ * @example
+ * Vtwo a = {1.0f, 2.0f};
+ * Vtwo b = {3.0f, 4.0f};
+ * Vtwo sum = vtwo_add(a, b);  // {4.0f, 6.0f}
+ */
+inline Vtwo vtwo_add(Vtwo a, Vtwo b)
+{
+	Vtwo result = {
+		.x = a.x + b.x,
+		.y = a.y + b.y,
+	};
+
+	return result;
+}
+
+/**
+ * @brief Subtracts vector b from vector a (calculates a - b)
+ *
+ * @param a The vector to subtract from
+ * @param b The vector to subtract from a
+ * @return Vtwo The difference (a.x - b.x, a.y - b.y)
+ *
+ * @example
+ * Vtwo a = {1.0f, 2.0f};
+ * Vtwo b = {5.0f, 7.0f};
+ * Vtwo diff = vtwo_sub(a, b);  // {-4.0f, -5.0f}
+ */
+inline Vtwo vtwo_sub(Vtwo a, Vtwo b)
+{
+	Vtwo result = {
+		.x = a.x - b.x,
+		.y = a.y - b.y,
+	};
+
+	return result;
+}
+
+/**
+ * @brief Scales x axis
+ *
+ * @param a The vector
+ * @param s The scalar
+ * @return Vtwo The scaled vector (a.x * s, a.y)
+ */
+inline Vtwo vtwo_scale_x(Vtwo a, float s)
+{
+	Vtwo result = {
+		.x = a.x * s,
+		.y = a.y,
+	};
+
+	return result;
+}
+
+/**
+ * @brief Scalar multiplication
+ *
+ * @param a The vector
+ * @param s The scalar
+ * @return Vtwo The scaled vector (a.x * s, a.y * s)
+ */
+inline Vtwo vtwo_scale(Vtwo a, float s)
+{
+	Vtwo result = {
+		.x = a.x * s,
+		.y = a.y * s,
+	};
+
+	return result;
+}
+
+/**
+ * @brief Scalar addition
+ *
+ * @param a The vector
+ * @param s The scalar
+ * @return Vtwo The translated vector (a.x * s, a.y * s)
+ */
+inline Vtwo vtwo_add_scalar(Vtwo a, float s)
+{
+	Vtwo result = {
+		.x = a.x + s,
+		.y = a.y + s,
+	};
+
+	return result;
+}
+
+/**
+ * @brief Calculates the dot product between two bidimensional vectors
+ *
+ * @param a One vector
+ * @param b Other vector
+ * @return float The dot product a . b
+ */
+inline float vtwo_dot(Vtwo a, Vtwo b)
+{
+	float result = a.x * b.x + a.y * b.y;
+
+	return result;
+}
+
+/**
+ * @brief Calculates the squared norm (squared length) of a vector
+ *
+ * Avoids a square root; use when only comparing magnitudes.
+ *
+ * @param a A vector
+ * @return float ||a||^2 = a.x^2 + a.y^2
+ */
+inline float vtwo_norm_sq(Vtwo a)
+{
+	float norm_sq = vtwo_dot(a, a);
+
+	return norm_sq;
+}
+
+inline float vtwo_norm(Vtwo a)
+{
+	float norm_sq = vtwo_norm_sq(a);
+	float result = sqrtf(norm_sq);
+
+	return result;
+}
+
+inline Vtwo vtwo_normalize(Vtwo a)
+{
+	float norm = vtwo_norm(a);
+	Vtwo result = vtwo_scale(a, 1.0F / norm);
+
+	return result;
+}
+
+#endif // LIB_H

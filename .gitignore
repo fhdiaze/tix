@@ -1,5 +1,9 @@
 # IDEs
-.vscode
+# .vscode
+
+# folders
+bin/
+data/
 
 # Prerequisites
 *.d
