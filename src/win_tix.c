@@ -1,5 +1,4 @@
-#include "log.h"
-#include <minwindef.h>
+#include "lib.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <windows.h>
@@ -7,46 +6,52 @@
 #undef LOG_LEVEL
 #define LOG_LEVEL LOG_LEVEL_ALL
 
-int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
-                     LPSTR lpCmdLine, int nCmdShow)
+int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
 {
-        logi("%p", (void *)hInstance);
-        logi("%p", (void *)hPrevInstance);
-        logi("%p", (void *)lpCmdLine);
-        logi("%d", nCmdShow);
-}
+	LOG_INFO("%p", (void *)hInstance);
+	LOG_INFO("%p", (void *)hPrevInstance);
+	LOG_INFO("%p", (void *)lpCmdLine);
+	LOG_INFO("%d", nShowCmd);
 
-int main(const int argc, const char *const argv[static argc + 1])
-{
-        if (argc < 2) {
-                logf("tix needs a file to be open\n");
-                exit(EXIT_FAILURE);
-        }
+	LOG_INFO("Starting the editor\n");
 
-        logt("Starting the editor\n");
+	const char *filename = "test.txt";
+	FILE *file = fopen(filename, "re");
+	if (file == nullptr) {
+		LOG_FATAL("The file %s could not be open\n", filename);
+		return EXIT_FAILURE;
+	}
 
-        const char *filename = argv[1];
-        FILE *file = fopen(filename, "re");
-        if (file == nullptr) {
-                logf("The file %s could not be open\n", filename);
-                return EXIT_FAILURE;
-        }
+	char line[1000];
+	if (fgets(line, 1000, file) == nullptr) {
+		LOG_FATAL("Failed to read from file %s\n", filename);
+		if (fclose(file) == EOF) {
+			LOG_FATAL("Failed to close file %s\n", filename);
 
-        char line[1000];
-        fgets(line, 1000, file);
+			return EXIT_FAILURE;
+		}
 
-        logi("Read line: %s", line);
+		return EXIT_FAILURE;
+	}
 
-        fclose(file);
+	LOG_INFO("Read line: %s", line);
 
-        constexpr int QUIT_CHAR = 'q';
-        int c = getchar();
+	if (fclose(file) == EOF) {
+		LOG_FATAL("Failed to close file %s\n", filename);
 
-        while (c != EOF) {
-                if (c == QUIT_CHAR) { break; }
+		return EXIT_FAILURE;
+	}
 
-                c = getchar();
-        }
+	constexpr int QUIT_CHAR = 'q';
+	int c = getchar();
 
-        return EXIT_SUCCESS;
+	while (c != EOF) {
+		if (c == QUIT_CHAR) {
+			break;
+		}
+
+		c = getchar();
+	}
+
+	return EXIT_SUCCESS;
 }
