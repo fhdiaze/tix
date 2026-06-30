@@ -48,6 +48,11 @@ void *arena_push_array(Arena *arena, size_t count, size_t size)
 	return result;
 }
 
+void *arena_push_array_zero()
+{
+	return nullptr;
+}
+
 // =============================================================================
 // String
 // =============================================================================

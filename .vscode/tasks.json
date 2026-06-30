@@ -1,0 +1,38 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build-x64",
+            "type": "shell",
+            "command": ".\\misc\\build.bat",
+            "args": [
+                "/m",
+                "debug",
+                "/Architecture",
+                "x64"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$msCompile"
+            ]
+        },
+        {
+            "label": "build-x86",
+            "type": "shell",
+            "command": ".\\misc\\build.bat",
+            "args": [
+                "/m",
+                "debug",
+                "/Architecture",
+                "x86"
+            ],
+            "group": "build",
+            "problemMatcher": [
+                "$msCompile"
+            ]
+        }
+    ]
+}

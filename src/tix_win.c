@@ -15,7 +15,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	LOG_INFO("Starting the editor\n");
 
-	const char *filename = "test.txt";
+	const char *filename = "./data/test.txt";
 	FILE *file = fopen(filename, "re");
 	if (file == nullptr) {
 		LOG_FATAL("The file %s could not be open\n", filename);

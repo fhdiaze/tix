@@ -39,14 +39,14 @@ if /i not "%Architecture%"=="x86" if /i not "%Architecture%"=="x64" (
     exit /b 1
 )
 
-set "TixFileName=tix"
+set "CoreFileName=tix"
 set "PlatformFileName=tix_win"
 set "PlatformFilePath=.\src\%PlatformFileName%.c"
-set "TixFilePath=.\src\%TixFileName%.c"
+set "CoreFilePath=.\src\%CoreFileName%.c"
 set "Outdir=.\bin"
 set "Datadir=.\data"
-set "OutPlatform=%Outdir%\%PlatformFileName%.exe"
-set "OutTix=%Outdir%\%TixFileName%.dll"
+set "OutPlatformFileName=%Outdir%\%PlatformFileName%.exe"
+set "OutCoreFileName=%Outdir%\%CoreFileName%.dll"
 
 if not exist "%Outdir%" (
     echo Creating %Outdir%...
@@ -107,22 +107,20 @@ if "%BuildMode%"=="debug" (
     echo Building in RELEASE mode...
 )
 
-set "TixFlags=!Flags!"
-set "TixFlags=!TixFlags! -Wl,/MAP:%Outdir%/%TixFileName%.map"
-set "TixFlags=!TixFlags! -Wl,/MAPINFO:EXPORTS"
-set "TixFlags=!TixFlags! -Wl,/EXPORT:sound_create_samples"
-set "TixFlags=!TixFlags! -Wl,/EXPORT:tix_update_and_render"
-set "TixFlags=!TixFlags! -Wl,/PDB:%Outdir%/tix_%random%.pdb"
-set "TixFlags=!TixFlags! -shared"
+set "CoreFlags=!Flags!"
+set "CoreFlags=!CoreFlags! -Wl,/MAP:%Outdir%/%CoreFileName%.map"
+set "CoreFlags=!CoreFlags! -Wl,/MAPINFO:EXPORTS"
+set "CoreFlags=!CoreFlags! -Wl,/PDB:%Outdir%/%CoreFileName%_%random%.pdb"
+set "CoreFlags=!CoreFlags! -shared"
 
-echo Building tix dll...
+echo Building %OutCoreFileName% ...
 echo.
-echo clang !TixFlags! %TixFilePath% -o %OutTix%
+echo clang !CoreFlags! %CoreFilePath% -o %OutCoreFileName%
 echo.
 echo Waiting for pdb file>"%Outdir%\lock.tmp"
 echo.
 
-clang !TixFlags! %TixFilePath% -o %OutTix%
+clang !CoreFlags! %CoreFilePath% -o %OutCoreFileName%
 
 del /q "%Outdir%\lock.tmp" 2>nul
 
@@ -148,12 +146,12 @@ set "PlatformFlags=!PlatformFlags! -Wl,/subsystem:windows"
 set "PlatformFlags=!PlatformFlags! -Wl,/MAP:%Outdir%/%PlatformFileName%.map"
 set "PlatformFlags=!PlatformFlags! -Wl,/MAPINFO:EXPORTS"
 
-echo Building platform exe...
+echo Building %OutPlatformFileName% ...
 echo.
-echo clang !PlatformFlags! %PlatformFilePath% -o %OutPlatform%
+echo clang !PlatformFlags! %PlatformFilePath% -o %OutPlatformFileName%
 echo.
 
-clang !PlatformFlags! %PlatformFilePath% -o %OutPlatform%
+clang !PlatformFlags! %PlatformFilePath% -o %OutPlatformFileName%
 
 if errorlevel 1 (
     echo Building platform exe failed!
