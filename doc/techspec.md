@@ -1,4 +1,4 @@
-# Techical specification
+# Technical specification
 
 ## Definitions
 

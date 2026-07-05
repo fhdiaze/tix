@@ -2,7 +2,7 @@
 
 ## Overview
 
-tix is an text editor focused on editing code in any programming language. It has the next values in order of importance:
+tix is a text editor focused on editing code in any programming language. It has the next values in order of importance:
 
 - Correctness
 - Speed
@@ -66,7 +66,7 @@ This editor will not support
 
 ## Modes
 
-### normal mode
+### Normal mode
 
 - among docks: Tab should move the cursor like in a grid: increasing column first
 - inside docks:
@@ -75,13 +75,13 @@ This editor will not support
 - buffer:
     - follow vim conventions: l move right, k move up, j move down, h move left
 
-### visual mode
+### Visual mode
 
-### insert mode
+### Insert mode
 
-### visual block mode
+### Visual block mode
 
-### multi selection mode
+### Multi selection mode
 
 ## Autocomplete
 
