@@ -11,17 +11,19 @@ set "Architecture=x64"
 set "LiveBuild=0"
 set "CoreFileName=tix"
 set "PlatformFileName=tix_win"
-set "PlatformFilePath=.\src\%PlatformFileName%.c"
-set "CoreFilePath=.\src\%CoreFileName%.c"
-set "Outdir=.\bin"
-set "Datadir=.\data"
-set "OutPlatformFileName=%Outdir%\%PlatformFileName%.exe"
-set "OutCoreFileName=%Outdir%\%CoreFileName%.dll"
+set "PlatformFilePath=./src/%PlatformFileName%.c"
+set "CoreFilePath=./src/%CoreFileName%.c"
+set "Outdir=./bin"
+set "Datadir=./data"
+set "OutPlatformFilePath=%Outdir%/%PlatformFileName%.exe"
+set "OutCoreFilePath=%Outdir%/%CoreFileName%.dll"
+set "FlagsFile=%ScriptDir%../compile_flags.txt"
 set "DebugFlags=-g -gcodeview -O0 -DDEBUG -Wl,/DEBUG:FULL -fms-runtime-lib=static_dbg"
 @REM set "DebugFlags=!DebugFlags! -fsanitize=address -fno-omit-frame-pointer"
 set "ReleaseFlags=-O3 -DNDEBUG -flto -Wl,/opt:ref -Wl,/opt:icf -fms-runtime-lib=static"
-set "CoreBuildFlags=-shared -Wl,/MAP:%Outdir%/%CoreFileName%.map,/MAPINFO:EXPORTS -Wl,/PDB:%Outdir%/%CoreFileName%_%random%.pdb"
-set "PlatformBuildFlags=-luser32 -lgdi32 -lwinmm -Wl,/subsystem:windows -Wl,/MAP:%Outdir%/%PlatformFileName%.map,/MAPINFO:EXPORTS"
+set "Flags="
+set "CoreFlags=-shared -Wl,/MAP:%Outdir%/%CoreFileName%.map,/MAPINFO:EXPORTS -Wl,/PDB:%Outdir%/%CoreFileName%_%random%.pdb"
+set "PlatformFlags=-luser32 -lgdi32 -lwinmm -Wl,/subsystem:windows -Wl,/MAP:%Outdir%/%PlatformFileName%.map,/MAPINFO:EXPORTS"
 
 :parse_args
 
@@ -78,8 +80,7 @@ if not exist "%Datadir%" (
 )
 
 REM Read flags from file (path is relative to this script's location, not the caller's cwd)
-set "Flags="
-for /f "usebackq tokens=*" %%A in ("%ScriptDir%..\compile_flags.txt") do (
+for /f "usebackq tokens=*" %%A in ("%FlagsFile%") do (
     set "line=%%A"
     set "line=!line: =!"
     if not "!line!"=="" if not "!line:~0,2!"=="//" (
@@ -103,27 +104,27 @@ if "%BuildMode%"=="debug" (
     echo Building in RELEASE mode...
 )
 
-set "CoreBuildFlags=!CoreBuildFlags! !Flags!"
-set "PlatformBuildFlags=!PlatformBuildFlags! !Flags!"
+set "CoreFlags=!CoreFlags! !Flags!"
+set "PlatformFlags=!PlatformFlags! !Flags!"
 
-echo Building %OutCoreFileName% ...
+echo Building %OutCoreFilePath% ...
 echo.
-echo clang !CoreBuildFlags! %CoreFilePath% -o %OutCoreFileName%
+echo clang !CoreFlags! %CoreFilePath% -o %OutCoreFilePath%
 echo.
 echo Waiting for pdb file>"%Outdir%\lock.tmp"
 echo.
 
-clang !CoreBuildFlags! %CoreFilePath% -o %OutCoreFileName%
+clang !CoreFlags! %CoreFilePath% -o %OutCoreFilePath%
 
 del /q "%Outdir%\lock.tmp" 2>nul
 
 if errorlevel 1 (
-    echo Building tix dll failed!
+    echo Building %OutCoreFilePath% failed!
     exit /b %errorlevel%
 )
 
 echo.
-echo Building tix dll succeeded!
+echo Building %OutCoreFilePath% succeeded!
 echo.
 
 if %LiveBuild% equ 1 (
@@ -131,17 +132,17 @@ if %LiveBuild% equ 1 (
     exit /b 0
 )
 
-echo Building %OutPlatformFileName% ...
+echo Building %OutPlatformFilePath% ...
 echo.
-echo clang !PlatformBuildFlags! %PlatformFilePath% -o %OutPlatformFileName%
+echo clang !PlatformFlags! %PlatformFilePath% -o %OutPlatformFilePath%
 echo.
 
-clang !PlatformBuildFlags! %PlatformFilePath% -o %OutPlatformFileName%
+clang !PlatformFlags! %PlatformFilePath% -o %OutPlatformFilePath%
 
 if errorlevel 1 (
-    echo Building platform exe failed!
+    echo Building %OutPlatformFilePath% failed!
     exit /b %errorlevel%
 )
 
 echo.
-echo Building platform exe succeeded!
+echo Building %OutPlatformFilePath% succeeded!
