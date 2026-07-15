@@ -2,8 +2,8 @@
 #include <stdlib.h>
 #include <windows.h>
 
+#include "app.h"
 #include "lib.h"
-#include "tix.h"
 
 #undef LOG_LEVEL
 #define LOG_LEVEL LOG_LEVEL_ALL
@@ -26,13 +26,13 @@ typedef struct WinOffscreenBuffer {
 	BITMAPINFO info;
 } WinOffscreenBuffer;
 
-static uint32_t g_is_running = 1U;
+static DWORD g_render_thread_id = 0;
 
 static WindowDimensions window_get_dimensions(HWND winhandle)
 {
 	WindowDimensions result;
-	RECT client_rec;
 
+	RECT client_rec;
 	GetClientRect(winhandle, &client_rec);
 
 	result.width = client_rec.right - client_rec.left;
@@ -64,38 +64,19 @@ inline static void keyboard_process_message(KeyState *key_state, uint32_t is_dow
  * @param lparam
  * @return
  */
-static LRESULT CALLBACK window_handle_callback(HWND win_handle, [[__maybe_unused__]] UINT msg,
-                                               [[__maybe_unused__]] WPARAM wparam, [[__maybe_unused__]] LPARAM lparam)
+static LRESULT CALLBACK window_procedure(HWND win_handle, [[__maybe_unused__]] UINT msg,
+                                         [[__maybe_unused__]] WPARAM wparam, [[__maybe_unused__]] LPARAM lparam)
 {
 	LRESULT result = 0;
 
 	switch (msg) {
 	case WM_CLOSE:
 	case WM_DESTROY: {
-		g_is_running = 0U;
+		PostQuitMessage(0);
 	} break;
-	case WM_CREATE: {
-		// TODO(fredy): use user data from window
-		// CREATESTRUCTA *cs = (CREATESTRUCTA*) lparam;
-	} break;
-	case WM_ACTIVATEAPP: {
-		OutputDebugStringA("WM_ACTIVATEAPP\n");
-	} break;
-	case WM_SYSKEYDOWN:
-	case WM_SYSKEYUP:
-	case WM_KEYDOWN:
-	case WM_KEYUP: {
-		assert(false && "We must be processing the keyboard in other place");
-	} break;
-	case WM_PAINT: {
-		PAINTSTRUCT paint;
-		HDC dc_handle = BeginPaint(win_handle, &paint);
-
-		WindowDimensions win_dim = window_get_dimensions(win_handle);
-
-		window_display_offscreen_buffer(dc_handle, nullptr, win_dim.width, win_dim.height);
-
-		EndPaint(win_handle, &paint);
+	case WM_CHAR:
+	case WM_SIZE: {
+		PostThreadMessageA(g_render_thread_id, msg, wparam, lparam);
 	} break;
 	default: {
 		result = DefWindowProcA(win_handle, msg, wparam, lparam);
@@ -109,51 +90,92 @@ static LRESULT CALLBACK window_handle_callback(HWND win_handle, [[__maybe_unused
  * @brief Process POSTED messages
  *
  * @param tix_state
- * @param keyboard_state
  */
-static void window_pump_messages(TixState *tix_state, KeyboardState *keyboard_state)
+static void render_process_messages(Tix *tix)
 {
 	MSG msg;
 	// TODO(fredy): limit the iterations of this loop
-	while (PeekMessageA(&msg, nullptr, 0, 0, PM_REMOVE)) {
+	while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
 		switch (msg.message) {
 		case WM_QUIT: {
 			// The WM_QUIT message is not associated with a window and therefore will never be received through a
 			// window's window procedure. It is retrieved only by the GetMessage or PeekMessage functions
-			tix_state->is_running = 0U;
+			tix->is_running = 0U;
 		} break;
-		case WM_SYSKEYDOWN:
-		case WM_SYSKEYUP:
 		case WM_KEYDOWN:
-		case WM_KEYUP: {
-			size_t vk_code = (size_t)msg.wParam;
-			size_t key_stroke_info = (size_t)msg.lParam;
-			uint32_t was_down = (key_stroke_info & (1U << 30U)) != 0;
-			uint32_t is_down = (key_stroke_info & (1UL << 31UL)) == 0;
-
-			if (was_down != is_down) {
-				if (vk_code == 'J') {
-					keyboard_process_message(&keyboard_state->move_up, is_down);
-				} else if (vk_code == 'K') {
-					keyboard_process_message(&keyboard_state->move_left, is_down);
-				} else if (vk_code == 'H') {
-					keyboard_process_message(&keyboard_state->move_down, is_down);
-				} else if (vk_code == 'L') {
-					keyboard_process_message(&keyboard_state->move_right, is_down);
-				} else if (vk_code == VK_ESCAPE) {
-					keyboard_process_message(&keyboard_state->scape, is_down);
-				}
-			}
+		case WM_CHAR: {
+		} break;
+		case WM_SIZE: {
+			// Keep it for awake
 		} break;
 		default: {
-			TranslateMessage(&msg);
-			DispatchMessageA(&msg);
+			assert(false && "unexpected message arrived to the render thread");
 		} break;
 		}
 	}
 }
 
-static DWORD WINAPI win_entry_point(LPVOID param)
+// =============================================================================
+// File management
+// =============================================================================
+
+typedef struct ReadFileResult {
+	size_t size_byte;
+	void *base_address;
+} ReadFileResult;
+
+static uint32_t file_free_memory(void *base_address)
+{
+	uint32_t result = 0U;
+
+	if (base_address) {
+		result = (uint32_t)VirtualFree(base_address, 0, MEM_RELEASE);
+	}
+
+	return result;
+}
+
+static ReadFileResult file_read(const char *const path)
+{
+	ReadFileResult result = {};
+
+	HANDLE handle =
+		CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (handle != INVALID_HANDLE_VALUE) {
+		LARGE_INTEGER filesize_struct;
+		if (GetFileSizeEx(handle, &filesize_struct)) {
+			uint32_t file_size_byte = (uint32_t)(filesize_struct.QuadPart);
+			result.base_address =
+				VirtualAlloc(nullptr, file_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+			if (result.base_address) {
+				DWORD read_size_byte = 0;
+				if (ReadFile(handle, result.base_address, file_size_byte, &read_size_byte, nullptr) ||
+				    read_size_byte == file_size_byte) {
+					result.size_byte = file_size_byte;
+				} else {
+					LOG_ERROR("failed to read the file: %s", path);
+
+					file_free_memory(result.base_address);
+
+					result.base_address = nullptr;
+					result.size_byte = 0;
+				}
+			} else {
+				LOG_ERROR("failed to allocate memory for the content of file: %s", path);
+			}
+		} else {
+			LOG_ERROR("failed to get the size of the file: %s", path);
+		}
+
+		CloseHandle(handle);
+	} else {
+		LOG_ERROR("failed to open the file: %s", path);
+	}
+
+	return result;
+}
+
+static unsigned long WINAPI render_run(void *param)
 {
 	HWND win_handle = (HWND)param;
 
@@ -170,17 +192,18 @@ static DWORD WINAPI win_entry_point(LPVOID param)
 		return EXIT_FAILURE;
 	}
 
-	TixState tix_state = {
+	Tix tix = {
 		.is_running = 1U,
-		.tix_path = "",
+		.context_path = "",
 	};
-	KeyboardState keyboard_state = {};
-	while (g_is_running) {
-		window_pump_messages(&tix_state, &keyboard_state);
+	tix.storage.perm_base_address = VirtualAlloc(nullptr, GB_TO_BYTES(2), flAllocationType, DWORD flProtect);
 
-		WindowDimensions windim = window_get_dimensions(win_handle);
+	while (tix.is_running) {
+		render_process_messages(&tix);
 
-		window_display_offscreen_buffer(dc_handle, nullptr, windim.width, windim.height);
+		WindowDimensions win_dim = window_get_dimensions(win_handle);
+
+		window_display_offscreen_buffer(dc_handle, nullptr, win_dim.width, win_dim.height);
 	}
 
 	char line[1000];
@@ -230,7 +253,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
 		.hInstance = hInstance,
 		.lpszClassName = "tix",
-		.lpfnWndProc = window_handle_callback,
+		.lpfnWndProc = window_procedure,
 	};
 
 	if (!RegisterClassA(&win_class)) {
@@ -246,7 +269,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		return EXIT_FAILURE;
 	}
 
-	CreateThread(nullptr, 0, win_entry_point, win_handle, 0, nullptr);
+	CreateThread(nullptr, 0, render_run, win_handle, 0, &g_render_thread_id);
 
 	for (;;) {
 		MSG msg = {};
@@ -255,7 +278,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 		if (msg.message == WM_CHAR || msg.message == WM_KEYDOWN || msg.message == WM_QUIT ||
 		    msg.message == WM_SIZE) {
-			PostThreadMessage(0, msg.message, msg.wParam, msg.lParam);
+			PostThreadMessageA(g_render_thread_id, msg.message, msg.wParam, msg.lParam);
 		} else {
 			DispatchMessageA(&msg);
 		}

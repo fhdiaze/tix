@@ -9,20 +9,22 @@ set "ScriptDir=%~dp0"
 set "BuildMode=debug"
 set "Architecture=x64"
 set "LiveBuild=0"
-set "CoreFileName=tix"
-set "PlatformFileName=tix_win"
+set "AppFileName=app"
+set "PlatformFileName=plat_win"
 set "PlatformFilePath=./src/%PlatformFileName%.c"
-set "CoreFilePath=./src/%CoreFileName%.c"
+set "AppFilePath=./src/%AppFileName%.c"
 set "Outdir=./bin"
 set "Datadir=./data"
-set "OutPlatformFilePath=%Outdir%/%PlatformFileName%.exe"
-set "OutCoreFilePath=%Outdir%/%CoreFileName%.dll"
+set "OutAppFileName=tix_app"
+set "OutPlatFileName=tix_win"
+set "OutPlatformFilePath=%Outdir%/%OutPlatFileName%.exe"
+set "OutAppFilePath=%Outdir%/%OutAppFileName%.dll"
 set "FlagsFile=%ScriptDir%../compile_flags.txt"
 set "DebugFlags=-g -gcodeview -O0 -DDEBUG -Wl,/DEBUG:FULL -fms-runtime-lib=static_dbg"
 @REM set "DebugFlags=!DebugFlags! -fsanitize=address -fno-omit-frame-pointer"
 set "ReleaseFlags=-O3 -DNDEBUG -flto -Wl,/opt:ref -Wl,/opt:icf -fms-runtime-lib=static"
 set "Flags="
-set "CoreFlags=-shared -Wl,/MAP:%Outdir%/%CoreFileName%.map,/MAPINFO:EXPORTS -Wl,/PDB:%Outdir%/%CoreFileName%_%random%.pdb"
+set "AppFlags=-shared -Wl,/MAP:%Outdir%/%AppFileName%.map,/MAPINFO:EXPORTS -Wl,/PDB:%Outdir%/%AppFileName%_%random%.pdb"
 set "PlatformFlags=-luser32 -lgdi32 -lwinmm -Wl,/subsystem:windows -Wl,/MAP:%Outdir%/%PlatformFileName%.map,/MAPINFO:EXPORTS"
 
 :parse_args
@@ -104,33 +106,37 @@ if "%BuildMode%"=="debug" (
     echo Building in RELEASE mode...
 )
 
-set "CoreFlags=!CoreFlags! !Flags!"
-set "PlatformFlags=!PlatformFlags! !Flags!"
+set "AppFlags=!AppFlags! !Flags!"
 
-echo Building %OutCoreFilePath% ...
+echo Building %OutAppFilePath% ...
 echo.
-echo clang !CoreFlags! %CoreFilePath% -o %OutCoreFilePath%
+echo clang !AppFlags! %AppFilePath% -o %OutAppFilePath%
 echo.
 echo Waiting for pdb file>"%Outdir%\lock.tmp"
 echo.
 
-clang !CoreFlags! %CoreFilePath% -o %OutCoreFilePath%
+clang !AppFlags! %AppFilePath% -o %OutAppFilePath%
 
 del /q "%Outdir%\lock.tmp" 2>nul
 
 if errorlevel 1 (
-    echo Building %OutCoreFilePath% failed!
+    echo Building %OutAppFilePath% failed!
     exit /b %errorlevel%
 )
 
 echo.
-echo Building %OutCoreFilePath% succeeded!
+echo Building %OutAppFilePath% succeeded!
+echo.
+
+echo ================================================================================
 echo.
 
 if %LiveBuild% equ 1 (
     echo Live build completed. Skipping platform build.
     exit /b 0
 )
+
+set "PlatformFlags=!PlatformFlags! !Flags!"
 
 echo Building %OutPlatformFilePath% ...
 echo.

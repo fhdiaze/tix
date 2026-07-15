@@ -1,19 +1,26 @@
-#include "tix.h"
+#include "app.h"
 
 // =============================================================================
 // Blob of text
 // =============================================================================
 
-typedef struct {
+
+
+typedef struct Position {
+	uint32_t x;
+	uint32_t y;
+} Position;
+
+typedef struct Blob {
 	char tx_name[256];
 	char tx_parts[256];
-} Tx_Blob;
+} Blob;
 
-// text buffer
-void tx_blob_split(Tx_Blob *blob)
+
+static void blob_split(Blob *blob)
 {
 }
 
-void tix_editor_init(void)
+static void init(void)
 {
 }
