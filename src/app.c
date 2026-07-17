@@ -4,23 +4,21 @@
 // Blob of text
 // =============================================================================
 
-
-
-typedef struct Position {
+typedef struct CellPosition {
 	uint32_t x;
 	uint32_t y;
-} Position;
+} CellPosition;
 
 typedef struct Blob {
 	char tx_name[256];
 	char tx_parts[256];
 } Blob;
 
-
 static void blob_split(Blob *blob)
 {
 }
 
-static void init(void)
+void tix_init(Tix *tix)
 {
+	blob_split(nullptr);
 }

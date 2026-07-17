@@ -175,66 +175,66 @@ static ReadFileResult file_read(const char *const path)
 	return result;
 }
 
+static void window_draw_lines(HDC dc_handle, ReadFileResult *file)
+{
+	unsigned line_height_px = 20U;
+	unsigned y = 0;
+	SetBkMode(dc_handle, TRANSPARENT);
+	SetTextColor(dc_handle, RGB(0, 0, 0));
+
+	char *line_start = file->base_address;
+	char *file_end_plus_one = (char *)file->base_address + file->size_byte;
+
+	for (char *p = file->base_address; p <= file_end_plus_one; ++p) {
+		if (p == file_end_plus_one || *p == '\n') {
+			unsigned line_length = (unsigned)(p - line_start);
+			if (line_length > 0 && line_start[line_length - 1] == '\r') {
+				--line_length;
+			}
+
+			TextOutA(dc_handle, 0, (int)y, line_start, (int)line_length);
+
+			line_start = p + 1;
+			y += line_height_px;
+		}
+	}
+}
+
 static unsigned long WINAPI render_run(void *param)
 {
 	HWND win_handle = (HWND)param;
 
 	HDC dc_handle = GetDC(win_handle);
-	if (!dc_handle) {
+	if (dc_handle) {
+		Tix tix = {
+			.is_running = 1U,
+			.context_path = "",
+			.storage = { .perm_size_byte = MB_TO_BYTES(64ULL), .trans_size_byte = GB_TO_BYTES(1ULL), },
+		};
+
+		tix.storage.perm_base_address = VirtualAlloc(MEMORY_BASE_ADDRESS,
+		                                             tix.storage.perm_size_byte + tix.storage.trans_size_byte,
+		                                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		tix.storage.trans_base_address = tix.storage.perm_base_address + tix.storage.perm_size_byte;
+
+		const char *file_path = "./test.txt";
+		ReadFileResult file = file_read(file_path);
+
+		while (tix.is_running) {
+			render_process_messages(&tix);
+
+			if (file.size_byte) {
+				window_draw_lines(dc_handle, &file);
+			} else {
+				LOG_FATAL("The file %s could not be open\n", file_path);
+			}
+
+			// WindowDimensions win_dim = window_get_dimensions(win_handle);
+
+			// window_display_offscreen_buffer(dc_handle, nullptr, win_dim.width, win_dim.height);
+		}
+	} else {
 		LOG_ERROR("error getting the device context");
-		return EXIT_FAILURE;
-	}
-
-	const char *file_path = "./test.txt";
-	FILE *file = fopen(file_path, "a+");
-	if (file == nullptr) {
-		LOG_FATAL("The file %s could not be open\n", file_path);
-		return EXIT_FAILURE;
-	}
-
-	Tix tix = {
-		.is_running = 1U,
-		.context_path = "",
-	};
-	tix.storage.perm_base_address = VirtualAlloc(nullptr, GB_TO_BYTES(2), flAllocationType, DWORD flProtect);
-
-	while (tix.is_running) {
-		render_process_messages(&tix);
-
-		WindowDimensions win_dim = window_get_dimensions(win_handle);
-
-		window_display_offscreen_buffer(dc_handle, nullptr, win_dim.width, win_dim.height);
-	}
-
-	char line[1000];
-	if (fgets(line, 1000, file) == nullptr) {
-		LOG_FATAL("Failed to read from file %s\n", file_path);
-
-		if (fclose(file) == EOF) {
-			LOG_FATAL("Failed to close file %s\n", file_path);
-
-			return EXIT_FAILURE;
-		}
-
-		return EXIT_FAILURE;
-	}
-
-	LOG_INFO("line read: %s", line);
-
-	if (fclose(file) == EOF) {
-		LOG_FATAL("error closing the file: '%s'\n", file_path);
-		return EXIT_FAILURE;
-	}
-
-	constexpr int QUIT_CHAR = 'q';
-	int c = getchar();
-
-	while (c != EOF) {
-		if (c == QUIT_CHAR) {
-			break;
-		}
-
-		c = getchar();
 	}
 
 	ExitProcess(0);
