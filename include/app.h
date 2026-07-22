@@ -57,6 +57,15 @@ typedef struct Cell {
 	char c;
 } Cell;
 
+/**
+ * @brief
+ *
+ */
+typedef struct Point {
+	size_t x;
+	size_t y;
+} Point;
+
 typedef struct Grid {
 	Cell *cells;
 	uint32_t width;
@@ -71,8 +80,13 @@ typedef struct Tix {
 	ContextMode context_mode;
 	char context_path[MAX_FILE_PATH];
 
-	size_t tix_line;
-	size_t tix_column;
+	size_t scroll_offset;
+	size_t visible_lines;
+	size_t lines_count;
+
+	size_t caret_line;
+	size_t caret_column;
+
 	Grid grid;
 	Storage storage;
 } Tix;
@@ -82,10 +96,5 @@ typedef struct Tix {
 // =============================================================================
 
 void tix_init(Tix *tix);
-
-// Parsing
-
-// structure: tree, lines
-// primitives: chars
 
 #endif // APP_H

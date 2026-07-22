@@ -4,21 +4,23 @@
 // Blob of text
 // =============================================================================
 
-typedef struct CellPosition {
-	uint32_t x;
-	uint32_t y;
-} CellPosition;
+// Parsing
 
-typedef struct Blob {
+// ui: pane, gutter, tab, panel,
+// entities: buffer, document, span/range, anchor, mark, selection
+// structure: tree, lines
+// primitives: chars, code_point, grapheme cluster, glyph, rune,
+
+typedef struct Buffer {
 	char tx_name[256];
 	char tx_parts[256];
-} Blob;
+} Buffer;
 
-static void blob_split(Blob *blob)
+static void buffer_split(Buffer *buffer)
 {
 }
 
 void tix_init(Tix *tix)
 {
-	blob_split(nullptr);
+	buffer_split(nullptr);
 }

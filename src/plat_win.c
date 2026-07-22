@@ -1,3 +1,4 @@
+#include <dwmapi.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <windows.h>
@@ -7,6 +8,14 @@
 
 #undef LOG_LEVEL
 #define LOG_LEVEL LOG_LEVEL_ALL
+
+#ifndef DWMWA_CAPTION_COLOR
+#define DWMWA_CAPTION_COLOR 35
+#endif
+
+#ifndef DWMWA_TEXT_COLOR
+#define DWMWA_TEXT_COLOR 36
+#endif
 
 typedef struct WindowDimensions {
 	long width;
@@ -102,8 +111,22 @@ static void render_process_messages(Tix *tix)
 			// window's window procedure. It is retrieved only by the GetMessage or PeekMessage functions
 			tix->is_running = 0U;
 		} break;
+		case WM_MOUSEWHEEL: {
+			int delta = GET_WHEEL_DELTA_WPARAM(msg.wParam);
+			// A "notch" refers to one discrete click/detent of a physical mouse wheel
+			int notches = delta / WHEEL_DELTA;
+			if (notches > 0 && tix->scroll_offset > 0) {
+				tix->scroll_offset -= (unsigned)notches;
+			} else if (notches < 0 && tix->scroll_offset < tix->lines_count - tix->visible_lines) {
+				tix->scroll_offset += (unsigned)-notches;
+			}
+
+			tix->scroll_offset = max();
+			tix->scroll_offset = min();
+		} break;
 		case WM_KEYDOWN:
 		case WM_CHAR: {
+			LOG_TRACE("A char arrived");
 		} break;
 		case WM_SIZE: {
 			// Keep it for awake
@@ -175,15 +198,17 @@ static ReadFileResult file_read(const char *const path)
 	return result;
 }
 
-static void window_draw_lines(HDC dc_handle, ReadFileResult *file)
+static void window_render_lines(HDC dc_handle, ReadFileResult *file, size_t start_line_idx, size_t lines_count)
 {
 	unsigned line_height_px = 20U;
 	unsigned y = 0;
 	SetBkMode(dc_handle, TRANSPARENT);
-	SetTextColor(dc_handle, RGB(0, 0, 0));
+	SetTextColor(dc_handle, RGB(220, 220, 220));
 
+	size_t current_line_number = 0;
 	char *line_start = file->base_address;
 	char *file_end_plus_one = (char *)file->base_address + file->size_byte;
+	size_t end_line_idx = start_line_idx + lines_count;
 
 	for (char *p = file->base_address; p <= file_end_plus_one; ++p) {
 		if (p == file_end_plus_one || *p == '\n') {
@@ -192,8 +217,11 @@ static void window_draw_lines(HDC dc_handle, ReadFileResult *file)
 				--line_length;
 			}
 
-			TextOutA(dc_handle, 0, (int)y, line_start, (int)line_length);
+			if (start_line_idx <= current_line_number && current_line_number <= end_line_idx) {
+				TextOutA(dc_handle, 0, (int)y, line_start, (int)line_length);
+			}
 
+			++current_line_number;
 			line_start = p + 1;
 			y += line_height_px;
 		}
@@ -209,6 +237,8 @@ static unsigned long WINAPI render_run(void *param)
 		Tix tix = {
 			.is_running = 1U,
 			.context_path = "",
+			.visible_lines = 10,
+			.lines_count = 20,
 			.storage = { .perm_size_byte = MB_TO_BYTES(64ULL), .trans_size_byte = GB_TO_BYTES(1ULL), },
 		};
 
@@ -224,7 +254,7 @@ static unsigned long WINAPI render_run(void *param)
 			render_process_messages(&tix);
 
 			if (file.size_byte) {
-				window_draw_lines(dc_handle, &file);
+				window_render_lines(dc_handle, &file, tix.scroll_offset, tix.visible_lines);
 			} else {
 				LOG_FATAL("The file %s could not be open\n", file_path);
 			}
@@ -249,11 +279,15 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 
 	LOG_INFO("Starting the editor\n");
 
+	COLORREF text_color = RGB(220, 220, 220);
+	COLORREF background_color = RGB(32, 34, 48);
+
 	WNDCLASSA win_class = {
 		.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
 		.hInstance = hInstance,
 		.lpszClassName = "tix",
 		.lpfnWndProc = window_procedure,
+		.hbrBackground = CreateSolidBrush(background_color),
 	};
 
 	if (!RegisterClassA(&win_class)) {
@@ -261,13 +295,18 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		return EXIT_FAILURE;
 	}
 
-	HWND win_handle = CreateWindowExA(0, win_class.lpszClassName, "tix", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-	                                  CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr,
-	                                  hInstance, nullptr);
+	HWND win_handle = CreateWindowExA(0, win_class.lpszClassName, "tix", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
+	                                  CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, hInstance,
+	                                  nullptr);
 	if (!win_handle) {
 		LOG_ERROR("error creating the window");
 		return EXIT_FAILURE;
 	}
+
+	DwmSetWindowAttribute(win_handle, DWMWA_CAPTION_COLOR, &background_color, sizeof(background_color));
+	DwmSetWindowAttribute(win_handle, DWMWA_TEXT_COLOR, &text_color, sizeof(text_color));
+
+	ShowWindow(win_handle, nShowCmd);
 
 	CreateThread(nullptr, 0, render_run, win_handle, 0, &g_render_thread_id);
 
@@ -277,7 +316,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		TranslateMessage(&msg);
 
 		if (msg.message == WM_CHAR || msg.message == WM_KEYDOWN || msg.message == WM_QUIT ||
-		    msg.message == WM_SIZE) {
+		    msg.message == WM_SIZE || msg.message == WM_MOUSEWHEEL) {
 			PostThreadMessageA(g_render_thread_id, msg.message, msg.wParam, msg.lParam);
 		} else {
 			DispatchMessageA(&msg);
