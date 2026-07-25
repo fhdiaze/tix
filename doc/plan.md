@@ -44,40 +44,110 @@ is single-source.
 ## Stage 0 — Window + owned backbuffer + present (no text yet)
 
 **Goal:** prove the window → pixel buffer → screen pipeline works, using only
-tools you already know (arrays, pointers, GDI blit). No D3D, no glyphs yet.
+tools you already know (arrays, pointers, and a raw pixel blit). No D3D, no
+glyphs yet.
+
+This is also where the current throwaway first test gets dropped: `TextOutA`
+(GDI *text drawing* — GDI rasterizes the font and draws glyphs straight into
+the window's DC, which is what `window_render_lines` in `plat_win.c` does
+now). The whole architecture exists to replace it — from Stage 2 on, glyphs
+are rasterized once into a DirectWrite coverage atlas and blended by hand, and
+GDI never touches text again.
 
 - Win32 window + standard message loop
-- Own backbuffer: a plain allocated block of memory sized to the window (in
-  pixels), described as a top-down bitmap so row 0 is the top row on screen
-- Reallocate the backbuffer whenever the window resizes
-- Present every frame by copying that memory straight to the window via
-  StretchDIBits — no intermediate GDI bitmap object needed
+- Own backbuffer allocated once at a generous upper bound, 32bpp BGRA, top-down
+- Present each frame with `SetDIBitsToDevice`; on resize just change the used
+  sub-region (reallocate only if the size exceeds the current allocation)
 - Sanity content: fill with a solid color or gradient, just to prove writes to
   the buffer show up on screen correctly, right-side up, right-sized
 
-**Presentation choice:** own-memory-plus-StretchDIBits, not
-SetDIBitsToDevice or BitBlt-off-a-cached-DIB-section. This is a deliberate
-pick, not a placeholder to revisit later — all three do the same class of copy
-into GDI's redirection surface, so there's no meaningful throughput difference
-between them. Don't spend time trying variants of this; see the note below for
-where the actual presentation-layer gain lives.
+### Target state — the specific low-level choices, and why
+
+These are deliberate picks for an optimal CPU renderer, not placeholders to
+revisit. The existing `WinBitmap` struct
+(`width`/`height`/`pitch_bytes`/`bytes_per_pixel`/`top_left_px`/`info`) is
+already the right descriptor for all of this — it just needs wiring up;
+`window_display_bitmap` is a `PatBlt(BLACKNESS)` stub today.
+
+**Backbuffer memory — `VirtualAlloc`, 32bpp BGRA, top-down.** One
+`VirtualAlloc(MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)` block, 4 bytes per
+pixel (BGRA, matching the byte-order note already on `WinBitmap`), laid out
+top-down (negative `biHeight`) so row 0 is the top scanline. 32bpp is optimal
+on two fronts at once: every pixel is DWORD-aligned, which makes a row a clean
+SIMD blend target in Stage 4, and it is GDI's native copy format, so
+`SetDIBitsToDevice` does a straight memcpy with no per-pixel conversion.
+`VirtualAlloc` (not `malloc`, not `CreateDIBSection`) because its base is
+page-aligned — free 16/32-byte SIMD alignment — and it matches the allocation
+style already used for the file read and the storage arena. Pitch = width × 4;
+32bpp rows are always DWORD-aligned, so no row padding is needed.
+
+**Present — `SetDIBitsToDevice`, not `StretchDIBits`/`BitBlt`.** We always
+present the logical `width × height` sub-region at exactly 1:1 — the buffer is
+never scaled to the window, because the client area *is* the logical size (see
+Resize below). That makes `SetDIBitsToDevice` the tightest fit: it has no
+stretch path and no raster-op to specify — hand GDI the raw `VirtualAlloc`
+pointer, a `BITMAPINFO` (`BI_RGB`, negative `biHeight` for top-down),
+`DIB_RGB_COLORS`, and the scanline range, and it does a straight copy.
+`StretchDIBits` behaves identically at 1:1 but carries a scaling code path we
+never exercise; its one edge — tolerating a source/dest size mismatch — doesn't
+apply here, because on resize we update the logical dimensions to match the
+client area immediately. The `CreateDIBSection` + memory-DC + `BitBlt` route is
+equivalent in copy cost on modern Windows and only pays off when you draw into
+the bitmap *with GDI calls* — we don't, we own every pixel and blend ourselves,
+so its extra `HBITMAP` / memory-DC / `SelectObject` lifetime management buys
+nothing. All three are the same *class* of software copy into GDI's redirection
+surface (see the cost note below) — so the pick is about fewest moving parts,
+not throughput. This blit is the presentation path for Stages 0–4 and is
+retired in Stage 5 when the flip-model swap chain takes over.
+
+**Device context — cache it, don't re-fetch per frame.** The window class uses
+`CS_OWNDC`, so the window keeps a private DC for its lifetime: `GetDC` once when
+the render thread starts and reuse that handle every frame (the code already
+does this). No `GetDC`/`ReleaseDC` or `BeginPaint`/`EndPaint` churn per frame.
+
+**Resize — allocate once at a generous size, then just change how much you
+use.** The backbuffer is owned by the render thread, so it is resized there
+too — never from the window procedure, which runs on the UI thread. `WM_SIZE`
+is already forwarded to the render thread via `PostThreadMessageA`.
+
+Do **not** `VirtualFree`/`VirtualAlloc` on every `WM_SIZE`. Interactive
+window-drag resizing fires `WM_SIZE` many times a second, and reallocating on
+each one is wasteful and can visibly stutter. Instead, allocate the block
+*once* at a comfortable upper bound — e.g. the primary monitor's resolution
+(`GetSystemMetrics(SM_CXSCREEN/SM_CYSCREEN)`), or the whole virtual desktop
+(`SM_CXVIRTUALSCREEN/SM_CYVIRTUALSCREEN`) if you want to survive being dragged
+across monitors. On `WM_SIZE`, only update the *logical* `width`/`height` (and
+the derived stride `pitch_bytes = width * 4`) that rendering and
+`SetDIBitsToDevice` use; the allocation is left alone. You render into, and present, the top-left
+`width × height` sub-region of a buffer that is almost always "big enough."
+
+Reallocate **only** in the rare case that a new size actually exceeds the
+current allocation (grow to the new bound, don't shrink back). This keeps the
+per-frame path allocation-free during a drag while still handling the edge case
+correctly. Because rendering is on its own thread, it can keep presenting
+*during* a drag-resize — the UI thread is parked in the modal move/size loop,
+but the render thread is not — a genuine benefit of the threaded design worth
+keeping.
 
 **Exit criteria:** resizing the window resizes the buffer and repaints
 correctly, no flicker, no artifacts.
 
 ---
 
-## Note: what StretchDIBits actually costs, and when to stop paying it
+## Note: what the GDI present blit actually costs, and when to stop paying it
 
-Worth knowing up front so the optimization order in Stages 4-5 makes sense:
+Worth knowing up front so the optimization order in Stages 4-5 makes sense.
+(This applies to any GDI present — `SetDIBitsToDevice`, `StretchDIBits`, or a
+`BitBlt` — since all three go through the same redirection surface.)
 
 - **GDI is CPU-only on modern Windows.** Hardware GDI acceleration was
-  deprecated starting with Windows 8 — StretchDIBits runs in software,
+  deprecated starting with Windows 8 — `SetDIBitsToDevice` runs in software,
   not on the GPU, same as your blend loop.
 - **A GDI-drawn window gets composited through an extra copy.** Windows keeps
-  a separate "redirection surface" for GDI windows; StretchDIBits copies your
-  buffer into that surface, and DWM composites the surface onto the desktop
-  separately. That's two full-frame copies per present, not one, and the
+  a separate "redirection surface" for GDI windows; the present blit copies
+  your buffer into that surface, and DWM composites the surface onto the
+  desktop separately. That's two full-frame copies per present, not one, and
+  the
   second one is invisible to your code.
 - **This is not this project's near-term bottleneck.** For a terminal-sized
   window, that extra copy is a few megabytes of memcpy — real, but dwarfed by
@@ -191,7 +261,7 @@ intuition for where the time actually goes before reaching for a GPU.
 - SIMD line/newline scanning over the raw file bytes — only worth doing if
   profiling actually shows the scan is a bottleneck, not preemptively
 
-**Deliberately out of scope:** the StretchDIBits/redirection-surface copy
+**Deliberately out of scope:** the `SetDIBitsToDevice`/redirection-surface copy
 described in the note after Stage 0. It's a fixed, small cost that's dwarfed
 by the loop above until that loop is fast — and it gets eliminated as a side
 effect of Stage 5's swap chain, not by further GDI tuning. Don't spend Stage 4

@@ -17,44 +17,26 @@
 #define DWMWA_TEXT_COLOR 36
 #endif
 
-typedef struct WindowDimensions {
-	long width;
-	long height;
-} WindowDimensions;
-
 /**
  * @brief (0,0) is on the top left corner.
  * The byte order in a register (little endian) is AA RR GG BB
  */
 typedef struct WinBitmap {
-	unsigned width;
-	unsigned height;
+	unsigned width_px;
+	unsigned height_px;
 	unsigned pitch_bytes; // size of a row in bytes
-	unsigned bytes_per_pixel;
-	void *top_left_px;
 	BITMAPINFO info;
+	void *top_left_px;
+	unsigned short bytes_per_pixel;
 } WinBitmap;
 
-static DWORD g_render_thread_id = 0;
+typedef struct ReadFileResult {
+	size_t size_byte;
+	void *base_address;
+} ReadFileResult;
 
-static WindowDimensions window_get_dimensions(HWND winhandle)
-{
-	WindowDimensions result;
-
-	RECT client_rec;
-	GetClientRect(winhandle, &client_rec);
-
-	result.width = client_rec.right - client_rec.left;
-	result.height = client_rec.bottom - client_rec.top;
-
-	return result;
-}
-
-static void window_display_bitmap(HDC dc_handle, WinBitmap *bitmap, long win_width,
-                                            long win_height)
-{
-	PatBlt(dc_handle, 0, 0, win_width, win_height, BLACKNESS);
-}
+// TODO(fredy):  - remove this global
+static unsigned long g_render_thread_id = 0;
 
 inline static void keyboard_process_message(KeyState *key_state, uint32_t is_down)
 {
@@ -94,59 +76,6 @@ static LRESULT CALLBACK window_procedure(HWND win_handle, [[__maybe_unused__]] U
 
 	return result;
 }
-
-/**
- * @brief Process POSTED messages
- *
- * @param tix_state
- */
-static void render_process_messages(Tix *tix)
-{
-	MSG msg;
-	// TODO(fredy): limit the iterations of this loop
-	while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
-		switch (msg.message) {
-		case WM_QUIT: {
-			// The WM_QUIT message is not associated with a window and therefore will never be received through a
-			// window's window procedure. It is retrieved only by the GetMessage or PeekMessage functions
-			tix->is_running = 0U;
-		} break;
-		case WM_MOUSEWHEEL: {
-			int delta = GET_WHEEL_DELTA_WPARAM(msg.wParam);
-			// A "notch" refers to one discrete click/detent of a physical mouse wheel
-			int notches = delta / WHEEL_DELTA;
-			if (notches > 0) {
-				tix->scroll_offset -= (unsigned)notches;
-			} else if (notches < 0) {
-				tix->scroll_offset += (unsigned)-notches;
-			}
-
-			tix->scroll_offset = max(tix->scroll_offset, 0);
-			tix->scroll_offset =
-				min(tix->scroll_offset, tix->scroll_offset < tix->lines_count - tix->visible_lines);
-		} break;
-		case WM_KEYDOWN:
-		case WM_CHAR: {
-			LOG_TRACE("A char arrived");
-		} break;
-		case WM_SIZE: {
-			// Keep it for awake
-		} break;
-		default: {
-			assert(false && "unexpected message arrived to the render thread");
-		} break;
-		}
-	}
-}
-
-// =============================================================================
-// File management
-// =============================================================================
-
-typedef struct ReadFileResult {
-	size_t size_byte;
-	void *base_address;
-} ReadFileResult;
 
 static uint32_t file_free_memory(void *base_address)
 {
@@ -199,41 +128,11 @@ static ReadFileResult file_read(const char *const path)
 	return result;
 }
 
-static void window_render_lines(HDC dc_handle, ReadFileResult *file, size_t start_line_idx, size_t lines_count)
-{
-	unsigned line_height_px = 20U;
-	unsigned y = 0;
-	SetBkMode(dc_handle, TRANSPARENT);
-	SetTextColor(dc_handle, RGB(220, 220, 220));
-
-	size_t current_line_number = 0;
-	char *line_start = file->base_address;
-	char *file_end_plus_one = (char *)file->base_address + file->size_byte;
-	size_t end_line_idx = start_line_idx + lines_count;
-
-	for (char *p = file->base_address; p <= file_end_plus_one; ++p) {
-		if (p == file_end_plus_one || *p == '\n') {
-			unsigned line_length = (unsigned)(p - line_start);
-			if (line_length > 0 && line_start[line_length - 1] == '\r') {
-				--line_length;
-			}
-
-			if (start_line_idx <= current_line_number && current_line_number <= end_line_idx) {
-				TextOutA(dc_handle, 0, (int)y, line_start, (int)line_length);
-			}
-
-			++current_line_number;
-			line_start = p + 1;
-			y += line_height_px;
-		}
-	}
-}
-
 static unsigned long WINAPI render_run(void *param)
 {
-	HWND win_handle = (HWND)param;
+	HWND window = (HWND)param;
 
-	HDC dc_handle = GetDC(win_handle);
+	HDC dc_handle = GetDC(window);
 	if (dc_handle) {
 		Tix tix = {
 			.is_running = 1U,
@@ -242,6 +141,8 @@ static unsigned long WINAPI render_run(void *param)
 			.lines_count = 20,
 			.storage = { .perm_size_byte = MB_TO_BYTES(64ULL), .trans_size_byte = GB_TO_BYTES(1ULL), },
 		};
+
+		WinBitmap backbuffer = {};
 
 		tix.storage.perm_base_address = VirtualAlloc(MEMORY_BASE_ADDRESS,
 		                                             tix.storage.perm_size_byte + tix.storage.trans_size_byte,
@@ -252,31 +153,140 @@ static unsigned long WINAPI render_run(void *param)
 		ReadFileResult file = file_read(file_path);
 
 		while (tix.is_running) {
+			RECT client_rec;
+			GetClientRect(window, &client_rec);
+
+			assert(client_rec.right - client_rec.left >= 0);
+			assert(client_rec.bottom - client_rec.top >= 0);
+
+			unsigned window_width_px = (unsigned)(client_rec.right - client_rec.left);
+			unsigned window_height_px = (unsigned)(client_rec.bottom - client_rec.top);
+
+			if (window_width_px * window_height_px > backbuffer.width_px * backbuffer.height_px) {
+				if (backbuffer.top_left_px) {
+					VirtualFree(backbuffer.top_left_px, 0, MEM_RELEASE);
+				}
+
+				size_t bitmap_memory_size = (size_t)(backbuffer.width_px) *
+				                            (size_t)(backbuffer.height_px) *
+				                            (size_t)(backbuffer.bytes_per_pixel);
+
+				backbuffer.top_left_px = VirtualAlloc(nullptr, bitmap_memory_size,
+				                                      MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+			}
+
+			backbuffer.width_px = window_width_px;
+			backbuffer.height_px = window_height_px;
+			backbuffer.bytes_per_pixel = 4;
+			backbuffer.info.bmiHeader.biSize = sizeof(backbuffer.info.bmiHeader);
+			backbuffer.info.bmiHeader.biWidth = (long)backbuffer.width_px;
+			backbuffer.info.bmiHeader.biHeight = -(long)backbuffer.height_px;
+			backbuffer.info.bmiHeader.biPlanes = 1;
+			backbuffer.info.bmiHeader.biBitCount = CHAR_BIT * backbuffer.bytes_per_pixel;
+			backbuffer.info.bmiHeader.biCompression = BI_RGB;
+
+			backbuffer.pitch_bytes = backbuffer.width_px * backbuffer.bytes_per_pixel;
+
+			// =============================================================================
 			// Input
-			render_process_messages(&tix);
+			// =============================================================================
 
+			// Process POSTED messages
+			MSG msg;
+			// TODO(fredy): limit the iterations of this loop
+			while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+				switch (msg.message) {
+				case WM_QUIT: {
+					// The WM_QUIT message is not associated with a window and therefore will never be received through a
+					// window's window procedure. It is retrieved only by the GetMessage or PeekMessage functions
+					tix.is_running = 0U;
+				} break;
+				case WM_MOUSEWHEEL: {
+					int delta = GET_WHEEL_DELTA_WPARAM(msg.wParam);
+					// A "notch" refers to one discrete click/detent of a physical mouse wheel
+					int notches = delta / WHEEL_DELTA;
+					if (notches > 0) {
+						tix.scroll_offset -= (unsigned)notches;
+					} else if (notches < 0) {
+						tix.scroll_offset += (unsigned)-notches;
+					}
+
+					tix.scroll_offset = max(tix.scroll_offset, 0);
+					tix.scroll_offset =
+						min(tix.scroll_offset,
+					            tix.scroll_offset < tix.lines_count - tix.visible_lines);
+				} break;
+				case WM_KEYDOWN:
+				case WM_CHAR: {
+					LOG_TRACE("A char arrived");
+				} break;
+				case WM_SIZE: {
+					// Keep it for awake
+				} break;
+				default: {
+					assert(false && "unexpected message arrived to the render thread");
+				} break;
+				}
+			}
+
+			// =============================================================================
 			// Segmentation
+			// =============================================================================
 
+			// =============================================================================
 			// Shaping
+			// =============================================================================
 
+			// =============================================================================
 			// Rasterization
+			// =============================================================================
 
 			// Store atlas tiles as 8-bit coverage/alpha, not pre-colored RGB. Same reasoning as the GPU shader:
 			// one grayscale glyph tile serves any foreground color, computed at blend time
 			// (out = bg + coverage * (fg - bg)), rather than re-rasterizing per color.
 
+			// =============================================================================
 			// Layout
+			// =============================================================================
 
-			// Render
 			if (file.size_byte) {
-				window_render_lines(dc_handle, &file, tix.scroll_offset, tix.visible_lines);
+				unsigned line_height_px = 20U;
+				unsigned y = 0;
+				SetBkMode(dc_handle, TRANSPARENT);
+				SetTextColor(dc_handle, RGB(220, 220, 220));
+
+				size_t current_line_number = 0;
+				char *line_start = file.base_address;
+				char *file_end_plus_one = (char *)file.base_address + file.size_byte;
+				size_t last_visible_line_idx = tix.scroll_offset + tix.visible_lines;
+
+				for (char *p = file.base_address; p <= file_end_plus_one; ++p) {
+					if (p == file_end_plus_one || *p == '\n') {
+						unsigned line_length = (unsigned)(p - line_start);
+						if (line_length > 0 && line_start[line_length - 1] == '\r') {
+							--line_length;
+						}
+
+						if (tix.scroll_offset <= current_line_number &&
+						    current_line_number <= last_visible_line_idx) {
+							TextOutA(dc_handle, 0, (int)y, line_start, (int)line_length);
+						}
+
+						++current_line_number;
+						line_start = p + 1;
+						y += line_height_px;
+					}
+				}
 			} else {
 				LOG_FATAL("The file %s could not be open\n", file_path);
 			}
 
-			// WindowDimensions win_dim = window_get_dimensions(win_handle);
+			// =============================================================================
+			// Present
+			// =============================================================================
 
-			// window_display_offscreen_buffer(dc_handle, nullptr, win_dim.width, win_dim.height);
+			// SetDIBitsToDevice(dc_handle, 0, 0, window_width_px, window_height_px, 0, 0, 0, window_height_px,
+			//                   backbuffer.top_left_px, &backbuffer.info, DIB_RGB_COLORS);
 		}
 	} else {
 		LOG_ERROR("error getting the device context");
