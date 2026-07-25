@@ -2,8 +2,15 @@
 
 ## Definitions
 
-- Structure: tree, lines, symbols, files, group, buffers
-- primitives: chars
+- Structure:
+    - tree
+    - line
+    - run
+    - symbol
+    - file
+    - group
+    - buffer
+- primitives: bytes -> lines -> runs -> codePoints -> grapheme (char) -> glyph
 
 ## Rules
 

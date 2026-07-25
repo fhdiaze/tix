@@ -21,12 +21,21 @@ Carlos has not experience with vim or mode-based editors.
 ### Scenario 2: Andrew
 Andrew has extended experience with neovim.
 
+## Goals
+
+- Syntax highlighting
+- Multi-color fonts
+- All of Unicode, including combining characters and right-to-left text like Arabic
+- Glyphs that can take up several cells
+- Line wrapping
+- Re-flowing line wrapping on window resize
+
 ## Non Goals
 
 This editor will not support
 - Scripting language for extensions
 
-## Screen
+## Screens Specification
 
 ### Docks
 
@@ -50,19 +59,19 @@ This editor will not support
 - There is a picker for the tabs in a dock
 - Tabs can be pinned to a dock
 
-## Actions
+### Actions
 
 - Command palette: a picker
 - Command prompt/pad: you can run the commands
 
-## Pickers
+### Pickers
 
 - Just one picker with prefixes:
   - File: <no prefix>
   - Command: >
   - Fzf: @
 
-## Navigation
+### Navigation
 
 ## Modes
 

@@ -26,14 +26,14 @@ typedef struct WindowDimensions {
  * @brief (0,0) is on the top left corner.
  * The byte order in a register (little endian) is AA RR GG BB
  */
-typedef struct WinOffscreenBuffer {
+typedef struct WinBitmap {
 	unsigned width;
 	unsigned height;
 	unsigned pitch_bytes; // size of a row in bytes
 	unsigned bytes_per_pixel;
 	void *top_left_px;
 	BITMAPINFO info;
-} WinOffscreenBuffer;
+} WinBitmap;
 
 static DWORD g_render_thread_id = 0;
 
@@ -50,7 +50,7 @@ static WindowDimensions window_get_dimensions(HWND winhandle)
 	return result;
 }
 
-static void window_display_offscreen_buffer(HDC dc_handle, WinOffscreenBuffer *offscreen_buffer, long win_width,
+static void window_display_bitmap(HDC dc_handle, WinBitmap *bitmap, long win_width,
                                             long win_height)
 {
 	PatBlt(dc_handle, 0, 0, win_width, win_height, BLACKNESS);
@@ -115,14 +115,15 @@ static void render_process_messages(Tix *tix)
 			int delta = GET_WHEEL_DELTA_WPARAM(msg.wParam);
 			// A "notch" refers to one discrete click/detent of a physical mouse wheel
 			int notches = delta / WHEEL_DELTA;
-			if (notches > 0 && tix->scroll_offset > 0) {
+			if (notches > 0) {
 				tix->scroll_offset -= (unsigned)notches;
-			} else if (notches < 0 && tix->scroll_offset < tix->lines_count - tix->visible_lines) {
+			} else if (notches < 0) {
 				tix->scroll_offset += (unsigned)-notches;
 			}
 
-			tix->scroll_offset = max();
-			tix->scroll_offset = min();
+			tix->scroll_offset = max(tix->scroll_offset, 0);
+			tix->scroll_offset =
+				min(tix->scroll_offset, tix->scroll_offset < tix->lines_count - tix->visible_lines);
 		} break;
 		case WM_KEYDOWN:
 		case WM_CHAR: {
@@ -251,8 +252,22 @@ static unsigned long WINAPI render_run(void *param)
 		ReadFileResult file = file_read(file_path);
 
 		while (tix.is_running) {
+			// Input
 			render_process_messages(&tix);
 
+			// Segmentation
+
+			// Shaping
+
+			// Rasterization
+
+			// Store atlas tiles as 8-bit coverage/alpha, not pre-colored RGB. Same reasoning as the GPU shader:
+			// one grayscale glyph tile serves any foreground color, computed at blend time
+			// (out = bg + coverage * (fg - bg)), rather than re-rasterizing per color.
+
+			// Layout
+
+			// Render
 			if (file.size_byte) {
 				window_render_lines(dc_handle, &file, tix.scroll_offset, tix.visible_lines);
 			} else {
