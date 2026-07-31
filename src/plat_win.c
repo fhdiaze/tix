@@ -21,14 +21,15 @@
  * @brief (0,0) is on the top left corner.
  * The byte order in a register (little endian) is AA RR GG BB
  */
-typedef struct WinBitmap {
+typedef struct Bitmap {
+	void *buf;
+	size_t buf_size_byte;
+
 	unsigned width_px;
 	unsigned height_px;
-	unsigned pitch_bytes; // size of a row in bytes
-	BITMAPINFO info;
-	void *top_left_px;
-	unsigned short bytes_per_pixel;
-} WinBitmap;
+
+	uint8_t pixel_size_byte;
+} Bitmap;
 
 typedef struct ReadFileResult {
 	size_t size_byte;
@@ -37,6 +38,42 @@ typedef struct ReadFileResult {
 
 // TODO(fredy):  - remove this global
 static unsigned long g_render_thread_id = 0;
+
+static void bitmap_draw_rectangle(Bitmap *bitmap, float min_x_px_f, float min_y_px_f, float max_x_px_f,
+                                  float max_y_px_f, float red, float green, float blue)
+{
+	assert(vmin_px.x <= vmax_px.x && vmin_px.y <= vmax_px.y);
+
+	unsigned min_x_px = (unsigned)max(floorf(vmin_px.x), 0);
+	unsigned min_y_px = (unsigned)max(floorf(vmin_px.y), 0);
+	unsigned max_x_px = (unsigned)max(ceilf(vmax_px.x), 0);
+	unsigned max_y_px = (unsigned)max(ceilf(vmax_px.y), 0);
+
+	min_x_px = min(min_x_px, bitmap->width_px);
+	min_y_px = min(min_y_px, bitmap->height_px);
+	max_x_px = min(max_x_px, bitmap->width_px);
+	max_y_px = min(max_y_px, bitmap->height_px);
+
+	uint32_t red_bits = (uint32_t)roundf(red * 255.0F);
+	uint32_t green_bits = (uint32_t)roundf(green * 255.0F);
+	uint32_t blue_bits = (uint32_t)roundf(blue * 255.0F);
+	uint32_t rgb_color = red_bits << 16UL | green_bits << 8UL | blue_bits;
+
+	uint32_t pitch_size_byte = bitmap->width_px * bitmap->pixel_size_byte;
+
+	unsigned char *pixel_first_byte_ptr = (unsigned char *)bitmap->buf + (size_t)(min_x_px * pitch_size_byte) +
+	                                      (size_t)(min_y_px * pitch_size_byte);
+	uint32_t *pixel = nullptr;
+	for (unsigned y = min_y_px; y < max_y_px; ++y) {
+		for (unsigned x = min_x_px; x < max_x_px; ++x) {
+			pixel = (uint32_t *)pixel_first_byte_ptr;
+			*pixel = rgb_color;
+			pixel_first_byte_ptr += bitmap->pixel_size_byte;
+		}
+
+		pixel_first_byte_ptr += pitch_size_byte - (max_x_px - min_x_px) * pitch_size_byte;
+	}
+}
 
 inline static void keyboard_process_message(KeyState *key_state, uint32_t is_down)
 {
@@ -142,8 +179,15 @@ static unsigned long WINAPI render_run(void *param)
 			.storage = { .perm_size_byte = MB_TO_BYTES(64ULL), .trans_size_byte = GB_TO_BYTES(1ULL), },
 		};
 
-		WinBitmap backbuffer = {};
-
+		Bitmap backbuffer = {
+			.pixel_size_byte = 4,
+		};
+		BITMAPINFO bitmap_info = { .bmiHeader = {
+						   .biSize = sizeof(BITMAPINFOHEADER),
+						   .biPlanes = 1,
+						   .biBitCount = CHAR_BIT * backbuffer.pixel_size_byte,
+						   .biCompression = BI_RGB,
+					   } };
 		tix.storage.perm_base_address = VirtualAlloc(MEMORY_BASE_ADDRESS,
 		                                             tix.storage.perm_size_byte + tix.storage.trans_size_byte,
 		                                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -153,39 +197,41 @@ static unsigned long WINAPI render_run(void *param)
 		ReadFileResult file = file_read(file_path);
 
 		while (tix.is_running) {
-			RECT client_rec;
-			GetClientRect(window, &client_rec);
+			// =============================================================================
+			// Window
+			// =============================================================================
+			RECT client_rect;
+			GetClientRect(window, &client_rect);
 
-			assert(client_rec.right - client_rec.left >= 0);
-			assert(client_rec.bottom - client_rec.top >= 0);
+			assert(client_rect.right - client_rect.left >= 0);
+			assert(client_rect.bottom - client_rect.top >= 0);
 
-			unsigned window_width_px = (unsigned)(client_rec.right - client_rec.left);
-			unsigned window_height_px = (unsigned)(client_rec.bottom - client_rec.top);
+			unsigned new_width_px = (unsigned)(client_rect.right - client_rect.left);
+			unsigned new_height_px = (unsigned)(client_rect.bottom - client_rect.top);
 
-			if (window_width_px * window_height_px > backbuffer.width_px * backbuffer.height_px) {
-				if (backbuffer.top_left_px) {
-					VirtualFree(backbuffer.top_left_px, 0, MEM_RELEASE);
+			size_t new_buf_size_byte =
+				(size_t)new_width_px * (size_t)new_height_px * (size_t)backbuffer.pixel_size_byte;
+
+			if (new_width_px != backbuffer.width_px || new_height_px != backbuffer.height_px) {
+				void *new_buf = VirtualAlloc(nullptr, new_buf_size_byte, MEM_RESERVE | MEM_COMMIT,
+				                             PAGE_READWRITE);
+
+				if (new_buf) {
+					if (backbuffer.buf && !VirtualFree(backbuffer.buf, 0, MEM_RELEASE)) {
+						LOG_ERROR("unable to deallocate memory of the previous backbuffer");
+						assert(false &&
+						       "unable to deallocate memory of the previous backbuffer");
+					}
+
+					backbuffer.buf = new_buf;
+					backbuffer.buf_size_byte = new_buf_size_byte;
+					backbuffer.width_px = new_width_px;
+					backbuffer.height_px = new_height_px;
+				} else {
+					LOG_ERROR("unable to allocate %zu bytes for the backbuffer", new_buf_size_byte);
+					assert(false && "unable to allocate memory for the backbuffer");
 				}
-
-				size_t bitmap_memory_size = (size_t)(backbuffer.width_px) *
-				                            (size_t)(backbuffer.height_px) *
-				                            (size_t)(backbuffer.bytes_per_pixel);
-
-				backbuffer.top_left_px = VirtualAlloc(nullptr, bitmap_memory_size,
-				                                      MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 			}
-
-			backbuffer.width_px = window_width_px;
-			backbuffer.height_px = window_height_px;
-			backbuffer.bytes_per_pixel = 4;
-			backbuffer.info.bmiHeader.biSize = sizeof(backbuffer.info.bmiHeader);
-			backbuffer.info.bmiHeader.biWidth = (long)backbuffer.width_px;
-			backbuffer.info.bmiHeader.biHeight = -(long)backbuffer.height_px;
-			backbuffer.info.bmiHeader.biPlanes = 1;
-			backbuffer.info.bmiHeader.biBitCount = CHAR_BIT * backbuffer.bytes_per_pixel;
-			backbuffer.info.bmiHeader.biCompression = BI_RGB;
-
-			backbuffer.pitch_bytes = backbuffer.width_px * backbuffer.bytes_per_pixel;
 
 			// =============================================================================
 			// Input
@@ -252,27 +298,35 @@ static unsigned long WINAPI render_run(void *param)
 			if (file.size_byte) {
 				unsigned line_height_px = 20U;
 				unsigned y = 0;
-				SetBkMode(dc_handle, TRANSPARENT);
-				SetTextColor(dc_handle, RGB(220, 220, 220));
 
-				size_t current_line_number = 0;
+				size_t line_idx = 0;
 				char *line_start = file.base_address;
 				char *file_end_plus_one = (char *)file.base_address + file.size_byte;
 				size_t last_visible_line_idx = tix.scroll_offset + tix.visible_lines;
 
 				for (char *p = file.base_address; p <= file_end_plus_one; ++p) {
 					if (p == file_end_plus_one || *p == '\n') {
-						unsigned line_length = (unsigned)(p - line_start);
+						size_t line_length = (size_t)(p - line_start);
 						if (line_length > 0 && line_start[line_length - 1] == '\r') {
 							--line_length;
 						}
 
-						if (tix.scroll_offset <= current_line_number &&
-						    current_line_number <= last_visible_line_idx) {
-							TextOutA(dc_handle, 0, (int)y, line_start, (int)line_length);
+						if (tix.scroll_offset <= line_idx &&
+						    line_idx <= last_visible_line_idx) {
+							float min_y = (float)line_height_px * (float)line_idx;
+							for (uint32_t glyph_idx = 0; glyph_idx < line_length;
+							     ++glyph_idx) {
+								Vtwo min_px = { .x = (float)glyph_idx * 10.0F, .y = };
+								Vtwo max_px = {};
+								float red = 1.0F;
+								float green = 1.0F;
+								float blue = 1.0F;
+								bitmap_draw_rectangle(&backbuffer, min_px, max_px, red,
+								                      green, blue);
+							}
 						}
 
-						++current_line_number;
+						++line_idx;
 						line_start = p + 1;
 						y += line_height_px;
 					}
@@ -285,8 +339,12 @@ static unsigned long WINAPI render_run(void *param)
 			// Present
 			// =============================================================================
 
-			// SetDIBitsToDevice(dc_handle, 0, 0, window_width_px, window_height_px, 0, 0, 0, window_height_px,
-			//                   backbuffer.top_left_px, &backbuffer.info, DIB_RGB_COLORS);
+			if (backbuffer.buf) {
+				bitmap_info.bmiHeader.biWidth = (long)backbuffer.width_px;
+				bitmap_info.bmiHeader.biHeight = -(long)backbuffer.height_px;
+				SetDIBitsToDevice(dc_handle, 0, 0, backbuffer.width_px, backbuffer.height_px, 0, 0, 0,
+				                  backbuffer.height_px, backbuffer.buf, &bitmap_info, DIB_RGB_COLORS);
+			}
 		}
 	} else {
 		LOG_ERROR("error getting the device context");
