@@ -42,12 +42,12 @@ static unsigned long g_render_thread_id = 0;
 static void bitmap_draw_rectangle(Bitmap *bitmap, float min_x_px_f, float min_y_px_f, float max_x_px_f,
                                   float max_y_px_f, float red, float green, float blue)
 {
-	assert(vmin_px.x <= vmax_px.x && vmin_px.y <= vmax_px.y);
+	assert(min_x_px_f <= max_x_px_f && min_y_px_f <= max_y_px_f);
 
-	unsigned min_x_px = (unsigned)max(floorf(vmin_px.x), 0);
-	unsigned min_y_px = (unsigned)max(floorf(vmin_px.y), 0);
-	unsigned max_x_px = (unsigned)max(ceilf(vmax_px.x), 0);
-	unsigned max_y_px = (unsigned)max(ceilf(vmax_px.y), 0);
+	unsigned min_x_px = (unsigned)max(floorf(min_x_px_f), 0);
+	unsigned min_y_px = (unsigned)max(floorf(min_y_px_f), 0);
+	unsigned max_x_px = (unsigned)max(ceilf(max_x_px_f), 0);
+	unsigned max_y_px = (unsigned)max(ceilf(max_y_px_f), 0);
 
 	min_x_px = min(min_x_px, bitmap->width_px);
 	min_y_px = min(min_y_px, bitmap->height_px);
@@ -296,7 +296,8 @@ static unsigned long WINAPI render_run(void *param)
 			// =============================================================================
 
 			if (file.size_byte) {
-				unsigned line_height_px = 20U;
+				unsigned cell_width_px = 10U;
+				unsigned cell_height_px = 20U;
 				unsigned y = 0;
 
 				size_t line_idx = 0;
@@ -313,22 +314,26 @@ static unsigned long WINAPI render_run(void *param)
 
 						if (tix.scroll_offset <= line_idx &&
 						    line_idx <= last_visible_line_idx) {
-							float min_y = (float)line_height_px * (float)line_idx;
+							float min_y_px = (float)cell_height_px * (float)line_idx;
+							float max_y_px = min_y_px + (float)cell_height_px;
+
 							for (uint32_t glyph_idx = 0; glyph_idx < line_length;
 							     ++glyph_idx) {
-								Vtwo min_px = { .x = (float)glyph_idx * 10.0F, .y = };
-								Vtwo max_px = {};
+								float min_x_px =
+									(float)glyph_idx * (float)cell_width_px;
+								float max_x_px = min_x_px + (float)cell_width_px;
 								float red = 1.0F;
 								float green = 1.0F;
 								float blue = 1.0F;
-								bitmap_draw_rectangle(&backbuffer, min_px, max_px, red,
-								                      green, blue);
+								bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px,
+								                      max_x_px, max_y_px, red, green,
+								                      blue);
 							}
 						}
 
 						++line_idx;
 						line_start = p + 1;
-						y += line_height_px;
+						y += cell_height_px;
 					}
 				}
 			} else {
