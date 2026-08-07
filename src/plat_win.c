@@ -39,20 +39,34 @@ typedef struct ReadFileResult {
 // TODO(fredy):  - remove this global
 static unsigned long g_render_thread_id = 0;
 
+/**
+ * @brief max_x_px_f and max_y_px_f are not included
+ *
+ * @param bitmap
+ * @param min_x_px_f
+ * @param min_y_px_f
+ * @param max_x_px_f
+ * @param max_y_px_f
+ * @param red
+ * @param green
+ * @param blue
+ */
 static void bitmap_draw_rectangle(Bitmap *bitmap, float min_x_px_f, float min_y_px_f, float max_x_px_f,
                                   float max_y_px_f, float red, float green, float blue)
 {
-	assert(min_x_px_f <= max_x_px_f && min_y_px_f <= max_y_px_f);
+	assert(min_x_px_f < max_x_px_f);
+	assert(min_y_px_f < max_y_px_f);
+	assert(min_x_px_f >= 0.0F);
+	assert(min_y_px_f >= 0.0F);
+	assert(min_x_px_f < (float)bitmap->width_px);
+	assert(min_y_px_f < (float)bitmap->height_px);
+	assert(max_x_px_f <= (float)bitmap->width_px);
+	assert(max_y_px_f <= (float)bitmap->height_px);
 
-	unsigned min_x_px = (unsigned)max(floorf(min_x_px_f), 0);
-	unsigned min_y_px = (unsigned)max(floorf(min_y_px_f), 0);
-	unsigned max_x_px = (unsigned)max(ceilf(max_x_px_f), 0);
-	unsigned max_y_px = (unsigned)max(ceilf(max_y_px_f), 0);
-
-	min_x_px = min(min_x_px, bitmap->width_px);
-	min_y_px = min(min_y_px, bitmap->height_px);
-	max_x_px = min(max_x_px, bitmap->width_px);
-	max_y_px = min(max_y_px, bitmap->height_px);
+	unsigned min_x_px = (unsigned)floorf(min_x_px_f);
+	unsigned min_y_px = (unsigned)floorf(min_y_px_f);
+	unsigned max_x_px = (unsigned)ceilf(max_x_px_f);
+	unsigned max_y_px = (unsigned)ceilf(max_y_px_f);
 
 	uint32_t red_bits = (uint32_t)roundf(red * 255.0F);
 	uint32_t green_bits = (uint32_t)roundf(green * 255.0F);
@@ -61,17 +75,17 @@ static void bitmap_draw_rectangle(Bitmap *bitmap, float min_x_px_f, float min_y_
 
 	uint32_t pitch_size_byte = bitmap->width_px * bitmap->pixel_size_byte;
 
-	unsigned char *pixel_first_byte_ptr = (unsigned char *)bitmap->buf + (size_t)(min_x_px * pitch_size_byte) +
-	                                      (size_t)(min_y_px * pitch_size_byte);
+	unsigned char *pixel_first_byte = (unsigned char *)bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) +
+	                                  (size_t)(min_y_px * pitch_size_byte);
 	uint32_t *pixel = nullptr;
 	for (unsigned y = min_y_px; y < max_y_px; ++y) {
 		for (unsigned x = min_x_px; x < max_x_px; ++x) {
-			pixel = (uint32_t *)pixel_first_byte_ptr;
+			pixel = (uint32_t *)pixel_first_byte;
 			*pixel = rgb_color;
-			pixel_first_byte_ptr += bitmap->pixel_size_byte;
+			pixel_first_byte += bitmap->pixel_size_byte;
 		}
 
-		pixel_first_byte_ptr += pitch_size_byte - (max_x_px - min_x_px) * pitch_size_byte;
+		pixel_first_byte += pitch_size_byte - (max_x_px - min_x_px) * bitmap->pixel_size_byte;
 	}
 }
 
@@ -298,7 +312,6 @@ static unsigned long WINAPI render_run(void *param)
 			if (file.size_byte) {
 				unsigned cell_width_px = 10U;
 				unsigned cell_height_px = 20U;
-				unsigned y = 0;
 
 				size_t line_idx = 0;
 				char *line_start = file.base_address;
@@ -314,7 +327,9 @@ static unsigned long WINAPI render_run(void *param)
 
 						if (tix.scroll_offset <= line_idx &&
 						    line_idx <= last_visible_line_idx) {
-							float min_y_px = (float)cell_height_px * (float)line_idx;
+							size_t relative_line_idx = line_idx - tix.scroll_offset;
+							float min_y_px =
+								(float)cell_height_px * (float)relative_line_idx;
 							float max_y_px = min_y_px + (float)cell_height_px;
 
 							for (uint32_t glyph_idx = 0; glyph_idx < line_length;
@@ -325,15 +340,22 @@ static unsigned long WINAPI render_run(void *param)
 								float red = 1.0F;
 								float green = 1.0F;
 								float blue = 1.0F;
-								bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px,
-								                      max_x_px, max_y_px, red, green,
-								                      blue);
+								if (min_x_px < (float)backbuffer.width_px &&
+								    min_y_px < (float)backbuffer.height_px) {
+									max_x_px = min(max_x_px,
+									               (float)backbuffer.width_px);
+									max_y_px = min(max_y_px,
+									               (float)backbuffer.height_px);
+									bitmap_draw_rectangle(&backbuffer, min_x_px,
+									                      min_y_px, max_x_px,
+									                      max_y_px, red, green,
+									                      blue);
+								}
 							}
 						}
 
 						++line_idx;
 						line_start = p + 1;
-						y += cell_height_px;
 					}
 				}
 			} else {
