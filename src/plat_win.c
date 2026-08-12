@@ -149,8 +149,7 @@ static ReadFileResult file_read(const char *const path)
 		LARGE_INTEGER filesize_struct;
 		if (GetFileSizeEx(handle, &filesize_struct)) {
 			uint32_t file_size_byte = (uint32_t)(filesize_struct.QuadPart);
-			result.base_address =
-				VirtualAlloc(nullptr, file_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+			result.base_address = VirtualAlloc(nullptr, file_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 			if (result.base_address) {
 				DWORD read_size_byte = 0;
 				if (ReadFile(handle, result.base_address, file_size_byte, &read_size_byte, nullptr) ||
@@ -197,11 +196,11 @@ static unsigned long WINAPI render_run(void *param)
 			.pixel_size_byte = 4,
 		};
 		BITMAPINFO bitmap_info = { .bmiHeader = {
-						   .biSize = sizeof(BITMAPINFOHEADER),
-						   .biPlanes = 1,
-						   .biBitCount = CHAR_BIT * backbuffer.pixel_size_byte,
-						   .biCompression = BI_RGB,
-					   } };
+									   .biSize = sizeof(BITMAPINFOHEADER),
+									   .biPlanes = 1,
+									   .biBitCount = CHAR_BIT * backbuffer.pixel_size_byte,
+									   .biCompression = BI_RGB,
+								   } };
 		tix.storage.perm_base_address = VirtualAlloc(MEMORY_BASE_ADDRESS,
 		                                             tix.storage.perm_size_byte + tix.storage.trans_size_byte,
 		                                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -223,18 +222,19 @@ static unsigned long WINAPI render_run(void *param)
 			unsigned new_width_px = (unsigned)(client_rect.right - client_rect.left);
 			unsigned new_height_px = (unsigned)(client_rect.bottom - client_rect.top);
 
-			size_t new_buf_size_byte =
-				(size_t)new_width_px * (size_t)new_height_px * (size_t)backbuffer.pixel_size_byte;
+			if (new_width_px != backbuffer.width_px) {
+				assert(true);
+			}
 
 			if (new_width_px != backbuffer.width_px || new_height_px != backbuffer.height_px) {
-				void *new_buf = VirtualAlloc(nullptr, new_buf_size_byte, MEM_RESERVE | MEM_COMMIT,
-				                             PAGE_READWRITE);
+				size_t new_buf_size_byte =
+					(size_t)new_width_px * (size_t)new_height_px * (size_t)backbuffer.pixel_size_byte;
+				void *new_buf = VirtualAlloc(nullptr, new_buf_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 
 				if (new_buf) {
 					if (backbuffer.buf && !VirtualFree(backbuffer.buf, 0, MEM_RELEASE)) {
 						LOG_ERROR("unable to deallocate memory of the previous backbuffer");
-						assert(false &&
-						       "unable to deallocate memory of the previous backbuffer");
+						assert(false && "unable to deallocate memory of the previous backbuffer");
 					}
 
 					backbuffer.buf = new_buf;
@@ -246,6 +246,9 @@ static unsigned long WINAPI render_run(void *param)
 					assert(false && "unable to allocate memory for the backbuffer");
 				}
 			}
+
+			bitmap_draw_rectangle(&backbuffer, 0.0F, 0.0F, (float)backbuffer.width_px, (float)backbuffer.height_px,
+			                      0.0F, 0.0F, 0.0F);
 
 			// =============================================================================
 			// Input
@@ -272,9 +275,7 @@ static unsigned long WINAPI render_run(void *param)
 					}
 
 					tix.scroll_offset = max(tix.scroll_offset, 0);
-					tix.scroll_offset =
-						min(tix.scroll_offset,
-					            tix.scroll_offset < tix.lines_count - tix.visible_lines);
+					tix.scroll_offset = min(tix.scroll_offset, tix.scroll_offset < tix.lines_count - tix.visible_lines);
 				} break;
 				case WM_KEYDOWN:
 				case WM_CHAR: {
@@ -325,31 +326,28 @@ static unsigned long WINAPI render_run(void *param)
 							--line_length;
 						}
 
-						if (tix.scroll_offset <= line_idx &&
-						    line_idx <= last_visible_line_idx) {
+						if (tix.scroll_offset <= line_idx && line_idx <= last_visible_line_idx) {
 							size_t relative_line_idx = line_idx - tix.scroll_offset;
-							float min_y_px =
-								(float)cell_height_px * (float)relative_line_idx;
+							float min_y_px = (float)cell_height_px * (float)relative_line_idx;
 							float max_y_px = min_y_px + (float)cell_height_px;
 
-							for (uint32_t glyph_idx = 0; glyph_idx < line_length;
-							     ++glyph_idx) {
-								float min_x_px =
-									(float)glyph_idx * (float)cell_width_px;
+							for (uint32_t glyph_idx = 0; glyph_idx < line_length; ++glyph_idx) {
+								float min_x_px = (float)glyph_idx * (float)cell_width_px;
 								float max_x_px = min_x_px + (float)cell_width_px;
 								float red = 1.0F;
 								float green = 1.0F;
 								float blue = 1.0F;
-								if (min_x_px < (float)backbuffer.width_px &&
-								    min_y_px < (float)backbuffer.height_px) {
-									max_x_px = min(max_x_px,
-									               (float)backbuffer.width_px);
-									max_y_px = min(max_y_px,
-									               (float)backbuffer.height_px);
-									bitmap_draw_rectangle(&backbuffer, min_x_px,
-									                      min_y_px, max_x_px,
-									                      max_y_px, red, green,
-									                      blue);
+
+								if (glyph_idx == line_length - 1 &&
+								    max_x_px > (float)cell_width_px * (float)line_length) {
+									assert(false);
+								}
+
+								if (min_x_px < (float)backbuffer.width_px && min_y_px < (float)backbuffer.height_px) {
+									max_x_px = min(max_x_px, (float)backbuffer.width_px);
+									max_y_px = min(max_y_px, (float)backbuffer.height_px);
+									bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px, red,
+									                      green, blue);
 								}
 							}
 						}
@@ -393,11 +391,11 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	COLORREF background_color = RGB(32, 34, 48);
 
 	WNDCLASSA win_class = {
-		.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
+		.style = CS_OWNDC,
 		.hInstance = hInstance,
 		.lpszClassName = "tix",
 		.lpfnWndProc = window_procedure,
-		.hbrBackground = CreateSolidBrush(background_color),
+		.hbrBackground = nullptr,
 	};
 
 	if (!RegisterClassA(&win_class)) {
@@ -425,8 +423,8 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		GetMessageA(&msg, nullptr, 0, 0);
 		TranslateMessage(&msg);
 
-		if (msg.message == WM_CHAR || msg.message == WM_KEYDOWN || msg.message == WM_QUIT ||
-		    msg.message == WM_SIZE || msg.message == WM_MOUSEWHEEL) {
+		if (msg.message == WM_CHAR || msg.message == WM_KEYDOWN || msg.message == WM_QUIT || msg.message == WM_SIZE ||
+		    msg.message == WM_MOUSEWHEEL) {
 			PostThreadMessageA(g_render_thread_id, msg.message, msg.wParam, msg.lParam);
 		} else {
 			DispatchMessageA(&msg);

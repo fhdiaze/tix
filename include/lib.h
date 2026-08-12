@@ -297,36 +297,36 @@ void *arena_push_zero(Arena *arena, size_t size_bytes)
 #endif // LOG_LEVEL
 
 #if DEBUG
-#define IMPL_LOG_WRITE(fmt, ...)                                                     \
-	do {                                                                         \
-		FILE *_pr_log_file = fopen("log.txt", "a+");                         \
-		if (_pr_log_file != nullptr) {                                       \
+#define IMPL_LOG_WRITE(fmt, ...)                                         \
+	do {                                                                 \
+		FILE *_pr_log_file = fopen("log.txt", "a+");                     \
+		if (_pr_log_file != nullptr) {                                   \
 			(void)fprintf(_pr_log_file, fmt __VA_OPT__(, ) __VA_ARGS__); \
 			(void)fclose(_pr_log_file);                                  \
-		}                                                                    \
+		}                                                                \
 	} while (false)
 #else
 #define IMPL_LOG_WRITE(fmt, ...) printf(fmt __VA_OPT__(, ) __VA_ARGS__)
 #endif
 
-#define IMPL_LOG_MSG(log_level, fmt, file_name, func_name, line_number, ...)                                   \
-	do {                                                                                                   \
-		char _pr_tstamp_str[LOG_TSTAMP_BUF_SIZE];                                                      \
-		struct timespec _pr_ts;                                                                        \
-		struct tm _pr_tm;                                                                              \
-                                                                                                               \
-		if (!timespec_get(&_pr_ts, TIME_UTC)) {                                                        \
-			break;                                                                                 \
-		}                                                                                              \
-		if (gmtime_s(&_pr_tm, &_pr_ts.tv_sec)) {                                                       \
-			break;                                                                                 \
-		}                                                                                              \
-		if (strftime(_pr_tstamp_str, LOG_TSTAMP_BUF_SIZE, "%FT%T", &_pr_tm) == 0) {                    \
-			break;                                                                                 \
-		}                                                                                              \
-                                                                                                               \
-		IMPL_LOG_WRITE("%c[%s.%09ldZ] %s:%s:%s: " fmt "\n", log_level, _pr_tstamp_str, _pr_ts.tv_nsec, \
-		               file_name, func_name, XSTRINGIFY(line_number) __VA_OPT__(, ) __VA_ARGS__);      \
+#define IMPL_LOG_MSG(log_level, fmt, file_name, func_name, line_number, ...)                                      \
+	do {                                                                                                          \
+		char _pr_tstamp_str[LOG_TSTAMP_BUF_SIZE];                                                                 \
+		struct timespec _pr_ts;                                                                                   \
+		struct tm _pr_tm;                                                                                         \
+                                                                                                                  \
+		if (!timespec_get(&_pr_ts, TIME_UTC)) {                                                                   \
+			break;                                                                                                \
+		}                                                                                                         \
+		if (gmtime_s(&_pr_tm, &_pr_ts.tv_sec)) {                                                                  \
+			break;                                                                                                \
+		}                                                                                                         \
+		if (strftime(_pr_tstamp_str, LOG_TSTAMP_BUF_SIZE, "%FT%T", &_pr_tm) == 0) {                               \
+			break;                                                                                                \
+		}                                                                                                         \
+                                                                                                                  \
+		IMPL_LOG_WRITE("%c[%s.%09ldZ] %s:%s:%s: " fmt "\n", log_level, _pr_tstamp_str, _pr_ts.tv_nsec, file_name, \
+		               func_name, XSTRINGIFY(line_number) __VA_OPT__(, ) __VA_ARGS__);                            \
 	} while (false)
 
 #define IMPL_LOG_MSG_NOOP(...) ((void)0)
