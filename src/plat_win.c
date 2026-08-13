@@ -243,9 +243,6 @@ static unsigned long WINAPI render_run(void *param)
 				}
 			}
 
-			bitmap_draw_rectangle(&backbuffer, 0.0F, 0.0F, (float)backbuffer.width_px, (float)backbuffer.height_px,
-			                      0.0F, 0.0F, 0.0F);
-
 			// =============================================================================
 			// Input
 			// =============================================================================
@@ -279,7 +276,8 @@ static unsigned long WINAPI render_run(void *param)
 					LOG_TRACE("A char arrived");
 				} break;
 				case WM_SIZE: {
-					// Keep it for awake
+					// No-op while the loop spins on PeekMessage; it only wakes the thread once the spin is
+					// replaced by a blocking wait (GetMessage / MsgWaitForMultipleObjectsEx)
 				} break;
 				default: {
 					assert(false && "unexpected message arrived to the render thread");
@@ -306,6 +304,8 @@ static unsigned long WINAPI render_run(void *param)
 			// =============================================================================
 			// Layout
 			// =============================================================================
+			bitmap_draw_rectangle(&backbuffer, 0.0F, 0.0F, (float)backbuffer.width_px, (float)backbuffer.height_px,
+			                      32.0F / 255.0F, 34.0F / 255.0F, 48.0F / 255.0F);
 
 			if (file.size_byte) {
 				unsigned cell_width_px = 10U;
@@ -390,11 +390,10 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
 	WNDCLASSA win_class = {
-		.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
+		.style = CS_OWNDC,
 		.hInstance = hInstance,
 		.lpszClassName = "tix",
 		.lpfnWndProc = window_procedure,
-		.hbrBackground = CreateSolidBrush(background_color),
 	};
 	if (!RegisterClassA(&win_class)) {
 		LOG_ERROR("error registering the window class");
