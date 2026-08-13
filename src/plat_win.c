@@ -222,10 +222,6 @@ static unsigned long WINAPI render_run(void *param)
 			unsigned new_width_px = (unsigned)(client_rect.right - client_rect.left);
 			unsigned new_height_px = (unsigned)(client_rect.bottom - client_rect.top);
 
-			if (new_width_px != backbuffer.width_px) {
-				assert(true);
-			}
-
 			if (new_width_px != backbuffer.width_px || new_height_px != backbuffer.height_px) {
 				size_t new_buf_size_byte =
 					(size_t)new_width_px * (size_t)new_height_px * (size_t)backbuffer.pixel_size_byte;
@@ -257,6 +253,7 @@ static unsigned long WINAPI render_run(void *param)
 			// Process POSTED messages
 			MSG msg;
 			// TODO(fredy): limit the iterations of this loop
+			// TODO(fredy): deal with WM_DPICHANGED and WM_GETDPISCALEDSIZE
 			while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
 				switch (msg.message) {
 				case WM_QUIT: {
@@ -390,14 +387,15 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	COLORREF text_color = RGB(220, 220, 220);
 	COLORREF background_color = RGB(32, 34, 48);
 
+	SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
 	WNDCLASSA win_class = {
-		.style = CS_OWNDC,
+		.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC,
 		.hInstance = hInstance,
 		.lpszClassName = "tix",
 		.lpfnWndProc = window_procedure,
-		.hbrBackground = nullptr,
+		.hbrBackground = CreateSolidBrush(background_color),
 	};
-
 	if (!RegisterClassA(&win_class)) {
 		LOG_ERROR("error registering the window class");
 		return EXIT_FAILURE;
