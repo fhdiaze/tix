@@ -132,6 +132,19 @@ static LRESULT CALLBACK window_procedure(HWND win_handle, [[__maybe_unused__]] U
 	return result;
 }
 
+static inline uint32_t file_get_last_write_time(const char *const file_path, FILETIME *result)
+{
+	WIN32_FILE_ATTRIBUTE_DATA data;
+	if (!GetFileAttributesExA(file_path, GetFileExInfoStandard, &data)) {
+		LOG_ERROR("unable to check the timestamp of the file: %s", file_path);
+		return 0U;
+	}
+
+	*result = data.ftLastWriteTime;
+
+	return 1U;
+}
+
 static uint32_t file_free_memory(void *base_address)
 {
 	uint32_t result = 0U;
@@ -301,10 +314,13 @@ static unsigned long WINAPI render_run(void *param)
 			// Segmentation
 			// =============================================================================
 
-			if (file.base_address) {
-				file_free_memory(file.base_address);
+			FILETIME last_write = {};
+			if (!file.base_address || file_get_last_write_time(file_path, &last_write)) {
+				if (file.base_address) {
+					file_free_memory(file.base_address);
+				}
+				file = file_read(file_path);
 			}
-			file = file_read(file_path);
 
 			// =============================================================================
 			// Shaping
