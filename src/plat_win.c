@@ -17,6 +17,10 @@
 #define DWMWA_TEXT_COLOR 36
 #endif
 
+#define BACKGROUND_COLOR_R 32
+#define BACKGROUND_COLOR_G 34
+#define BACKGROUND_COLOR_B 48
+
 /**
  * @brief (0,0) is on the top left corner.
  * The byte order in a register (little endian) is AA RR GG BB
@@ -187,7 +191,6 @@ static unsigned long WINAPI render_run(void *param)
 		Tix tix = {
 			.is_running = 1U,
 			.context_path = "",
-			.visible_lines = 10,
 			.lines_count = 20,
 			.storage = { .perm_size_byte = MB_TO_BYTES(64ULL), .trans_size_byte = GB_TO_BYTES(1ULL), },
 		};
@@ -207,9 +210,44 @@ static unsigned long WINAPI render_run(void *param)
 		tix.storage.trans_base_address = tix.storage.perm_base_address + tix.storage.perm_size_byte;
 
 		const char *file_path = "./test.txt";
-		ReadFileResult file = file_read(file_path);
+		ReadFileResult file = {};
 
 		while (tix.is_running) {
+			// =============================================================================
+			// Input
+			// =============================================================================
+			int notches = 0;
+
+			// Process POSTED messages
+			MSG msg;
+			// TODO(fredy): limit the iterations of this loop
+			// TODO(fredy): deal with WM_DPICHANGED and WM_GETDPISCALEDSIZE
+			while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+				switch (msg.message) {
+				case WM_QUIT: {
+					// The WM_QUIT message is not associated with a window and therefore will never be received through a
+					// window's window procedure. It is retrieved only by the GetMessage or PeekMessage functions
+					tix.is_running = 0U;
+				} break;
+				case WM_MOUSEWHEEL: {
+					int delta = GET_WHEEL_DELTA_WPARAM(msg.wParam);
+					// A "notch" refers to one discrete click/detent of a physical mouse wheel
+					notches = delta / WHEEL_DELTA;
+				} break;
+				case WM_KEYDOWN:
+				case WM_CHAR: {
+					LOG_TRACE("A char arrived");
+				} break;
+				case WM_SIZE: {
+					// No-op while the loop spins on PeekMessage; it only wakes the thread once the spin is
+					// replaced by a blocking wait (GetMessage / MsgWaitForMultipleObjectsEx)
+				} break;
+				default: {
+					assert(false && "unexpected message arrived to the render thread");
+				} break;
+				}
+			}
+
 			// =============================================================================
 			// Window
 			// =============================================================================
@@ -244,77 +282,46 @@ static unsigned long WINAPI render_run(void *param)
 			}
 
 			// =============================================================================
-			// Input
+			// Update
 			// =============================================================================
+			unsigned cell_width_px = 10U;
+			unsigned cell_height_px = 20U;
+			unsigned visible_lines = (unsigned)floorf((float)backbuffer.height_px / (float)cell_height_px);
 
-			// Process POSTED messages
-			MSG msg;
-			// TODO(fredy): limit the iterations of this loop
-			// TODO(fredy): deal with WM_DPICHANGED and WM_GETDPISCALEDSIZE
-			while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
-				switch (msg.message) {
-				case WM_QUIT: {
-					// The WM_QUIT message is not associated with a window and therefore will never be received through a
-					// window's window procedure. It is retrieved only by the GetMessage or PeekMessage functions
-					tix.is_running = 0U;
-				} break;
-				case WM_MOUSEWHEEL: {
-					int delta = GET_WHEEL_DELTA_WPARAM(msg.wParam);
-					// A "notch" refers to one discrete click/detent of a physical mouse wheel
-					int notches = delta / WHEEL_DELTA;
-					if (notches > 0) {
-						tix.scroll_offset -= (unsigned)notches;
-					} else if (notches < 0) {
-						tix.scroll_offset += (unsigned)-notches;
-					}
-
-					tix.scroll_offset = max(tix.scroll_offset, 0);
-					tix.scroll_offset = min(tix.scroll_offset, tix.scroll_offset < tix.lines_count - tix.visible_lines);
-				} break;
-				case WM_KEYDOWN:
-				case WM_CHAR: {
-					LOG_TRACE("A char arrived");
-				} break;
-				case WM_SIZE: {
-					// No-op while the loop spins on PeekMessage; it only wakes the thread once the spin is
-					// replaced by a blocking wait (GetMessage / MsgWaitForMultipleObjectsEx)
-				} break;
-				default: {
-					assert(false && "unexpected message arrived to the render thread");
-				} break;
-				}
+			if (notches > 0) {
+				tix.scroll_offset -= (unsigned)notches;
+			} else if (notches < 0) {
+				tix.scroll_offset += (unsigned)-notches;
 			}
+
+			tix.scroll_offset = max(tix.scroll_offset, 0);
+			tix.scroll_offset = min(tix.scroll_offset, tix.lines_count - visible_lines);
 
 			// =============================================================================
 			// Segmentation
 			// =============================================================================
+
+			if (file.base_address) {
+				file_free_memory(file.base_address);
+			}
+			file = file_read(file_path);
 
 			// =============================================================================
 			// Shaping
 			// =============================================================================
 
 			// =============================================================================
-			// Rasterization
-			// =============================================================================
-
-			// Store atlas tiles as 8-bit coverage/alpha, not pre-colored RGB. Same reasoning as the GPU shader:
-			// one grayscale glyph tile serves any foreground color, computed at blend time
-			// (out = bg + coverage * (fg - bg)), rather than re-rasterizing per color.
-
-			// =============================================================================
 			// Layout
 			// =============================================================================
 			bitmap_draw_rectangle(&backbuffer, 0.0F, 0.0F, (float)backbuffer.width_px, (float)backbuffer.height_px,
-			                      32.0F / 255.0F, 34.0F / 255.0F, 48.0F / 255.0F);
+			                      BACKGROUND_COLOR_R / 255.0F, BACKGROUND_COLOR_G / 255.0F,
+			                      BACKGROUND_COLOR_B / 255.0F);
 
 			if (file.size_byte) {
-				unsigned cell_width_px = 10U;
-				unsigned cell_height_px = 20U;
-
 				size_t line_idx = 0;
 				char *line_start = file.base_address;
 				char *file_end_plus_one = (char *)file.base_address + file.size_byte;
-				size_t last_visible_line_idx = tix.scroll_offset + tix.visible_lines;
+				size_t last_visible_line_idx = tix.scroll_offset + visible_lines;
 
 				for (char *p = file.base_address; p <= file_end_plus_one; ++p) {
 					if (p == file_end_plus_one || *p == '\n') {
@@ -343,6 +350,12 @@ static unsigned long WINAPI render_run(void *param)
 								if (min_x_px < (float)backbuffer.width_px && min_y_px < (float)backbuffer.height_px) {
 									max_x_px = min(max_x_px, (float)backbuffer.width_px);
 									max_y_px = min(max_y_px, (float)backbuffer.height_px);
+
+									if (line_start[glyph_idx] == ' ') {
+										red = BACKGROUND_COLOR_R / 255.0F;
+										green = BACKGROUND_COLOR_G / 255.0F;
+										blue = BACKGROUND_COLOR_B / 255.0F;
+									}
 									bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px, red,
 									                      green, blue);
 								}
@@ -353,14 +366,26 @@ static unsigned long WINAPI render_run(void *param)
 						line_start = p + 1;
 					}
 				}
+
+				tix.lines_count = line_idx;
 			} else {
 				LOG_FATAL("The file %s could not be open\n", file_path);
 			}
 
 			// =============================================================================
-			// Present
+			// Rasterization
+			// =============================================================================
+			// Store atlas tiles as 8-bit coverage/alpha, not pre-coloured RGB. Same reasoning as the GPU shader:
+			// one grayscale glyph tile serves any foreground color, computed at blend time
+			// (out = bg + coverage * (fg - bg)), rather than re-rasterizing per color.
+
+			// =============================================================================
+			// Composition
 			// =============================================================================
 
+			// =============================================================================
+			// Present
+			// =============================================================================
 			if (backbuffer.buf) {
 				bitmap_info.bmiHeader.biWidth = (long)backbuffer.width_px;
 				bitmap_info.bmiHeader.biHeight = -(long)backbuffer.height_px;

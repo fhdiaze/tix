@@ -81,7 +81,6 @@ typedef struct Tix {
 	char context_path[MAX_FILE_PATH];
 
 	size_t scroll_offset;
-	size_t visible_lines;
 	size_t lines_count;
 
 	size_t caret_line;
