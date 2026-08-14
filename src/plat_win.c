@@ -220,7 +220,9 @@ static unsigned long WINAPI render_run(void *param)
 		tix.storage.perm_base_address = VirtualAlloc(MEMORY_BASE_ADDRESS,
 		                                             tix.storage.perm_size_byte + tix.storage.trans_size_byte,
 		                                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-		tix.storage.trans_base_address = tix.storage.perm_base_address + tix.storage.perm_size_byte;
+		if (tix.storage.perm_base_address) {
+			tix.storage.trans_base_address = tix.storage.perm_base_address + tix.storage.perm_size_byte;
+		}
 
 		const char *file_path = "./test.txt";
 		ReadFileResult file = {};
@@ -273,12 +275,20 @@ static unsigned long WINAPI render_run(void *param)
 			unsigned new_width_px = (unsigned)(client_rect.right - client_rect.left);
 			unsigned new_height_px = (unsigned)(client_rect.bottom - client_rect.top);
 
-			if (new_width_px != backbuffer.width_px || new_height_px != backbuffer.height_px) {
-				size_t new_buf_size_byte =
-					(size_t)new_width_px * (size_t)new_height_px * (size_t)backbuffer.pixel_size_byte;
-				void *new_buf = VirtualAlloc(nullptr, new_buf_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+			size_t new_buf_size_byte =
+				(size_t)new_width_px * (size_t)new_height_px * (size_t)backbuffer.pixel_size_byte;
 
-				if (new_buf) {
+			if (new_width_px != backbuffer.width_px || new_height_px != backbuffer.height_px) {
+				void *new_buf = nullptr;
+				if (new_buf_size_byte > 0) {
+					new_buf = VirtualAlloc(nullptr, new_buf_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+					if (!new_buf) {
+						LOG_ERROR("unable to allocate %zu bytes for the backbuffer", new_buf_size_byte);
+						assert(false && "unable to allocate memory for the backbuffer");
+					}
+				}
+
+				if (new_buf || new_buf_size_byte == 0) {
 					if (backbuffer.buf && !VirtualFree(backbuffer.buf, 0, MEM_RELEASE)) {
 						LOG_ERROR("unable to deallocate memory of the previous backbuffer");
 						assert(false && "unable to deallocate memory of the previous backbuffer");
@@ -302,9 +312,17 @@ static unsigned long WINAPI render_run(void *param)
 			unsigned visible_lines = (unsigned)floorf((float)backbuffer.height_px / (float)cell_height_px);
 
 			if (notches > 0) {
-				tix.scroll_offset -= (unsigned)notches;
+				if (tix.scroll_offset > (unsigned)notches) {
+					tix.scroll_offset -= (unsigned)notches;
+				} else {
+					tix.scroll_offset = 0;
+				}
 			} else if (notches < 0) {
 				tix.scroll_offset += (unsigned)-notches;
+				size_t max_scroll_offset = tix.lines_count > visible_lines ? tix.lines_count - visible_lines : 0;
+				if (tix.scroll_offset > max_scroll_offset) {
+					tix.scroll_offset = max_scroll_offset;
+				}
 			}
 
 			tix.scroll_offset = max(tix.scroll_offset, 0);
@@ -329,15 +347,17 @@ static unsigned long WINAPI render_run(void *param)
 			// =============================================================================
 			// Layout
 			// =============================================================================
-			bitmap_draw_rectangle(&backbuffer, 0.0F, 0.0F, (float)backbuffer.width_px, (float)backbuffer.height_px,
-			                      BACKGROUND_COLOR_R / 255.0F, BACKGROUND_COLOR_G / 255.0F,
-			                      BACKGROUND_COLOR_B / 255.0F);
+			if (backbuffer.width_px > 0 && backbuffer.height_px > 0) {
+				bitmap_draw_rectangle(&backbuffer, 0.0F, 0.0F, (float)backbuffer.width_px, (float)backbuffer.height_px,
+				                      BACKGROUND_COLOR_R / 255.0F, BACKGROUND_COLOR_G / 255.0F,
+				                      BACKGROUND_COLOR_B / 255.0F);
+			}
 
 			if (file.size_byte) {
 				size_t line_idx = 0;
 				char *line_start = file.base_address;
 				char *file_end_plus_one = (char *)file.base_address + file.size_byte;
-				size_t last_visible_line_idx = tix.scroll_offset + visible_lines;
+				size_t last_visible_line_idx_plus_one = tix.scroll_offset + visible_lines;
 
 				for (char *p = file.base_address; p <= file_end_plus_one; ++p) {
 					if (p == file_end_plus_one || *p == '\n') {
@@ -346,7 +366,7 @@ static unsigned long WINAPI render_run(void *param)
 							--line_length;
 						}
 
-						if (tix.scroll_offset <= line_idx && line_idx <= last_visible_line_idx) {
+						if (tix.scroll_offset <= line_idx && line_idx < last_visible_line_idx_plus_one) {
 							size_t relative_line_idx = line_idx - tix.scroll_offset;
 							float min_y_px = (float)cell_height_px * (float)relative_line_idx;
 							float max_y_px = min_y_px + (float)cell_height_px;

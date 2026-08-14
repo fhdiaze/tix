@@ -149,8 +149,7 @@ static ReadFileResult file_read(const char *const path)
 		LARGE_INTEGER filesize_struct;
 		if (GetFileSizeEx(handle, &filesize_struct)) {
 			uint32_t file_size_byte = (uint32_t)(filesize_struct.QuadPart);
-			result.base_address =
-				VirtualAlloc(nullptr, file_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+			result.base_address = VirtualAlloc(nullptr, file_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 			if (result.base_address) {
 				DWORD read_size_byte = 0;
 				if (ReadFile(handle, result.base_address, file_size_byte, &read_size_byte, nullptr) ||
@@ -197,11 +196,11 @@ static unsigned long WINAPI render_run(void *param)
 			.pixel_size_byte = 4,
 		};
 		BITMAPINFO bitmap_info = { .bmiHeader = {
-						   .biSize = sizeof(BITMAPINFOHEADER),
-						   .biPlanes = 1,
-						   .biBitCount = CHAR_BIT * backbuffer.pixel_size_byte,
-						   .biCompression = BI_RGB,
-					   } };
+									   .biSize = sizeof(BITMAPINFOHEADER),
+									   .biPlanes = 1,
+									   .biBitCount = CHAR_BIT * backbuffer.pixel_size_byte,
+									   .biCompression = BI_RGB,
+								   } };
 		tix.storage.perm_base_address = VirtualAlloc(MEMORY_BASE_ADDRESS,
 		                                             tix.storage.perm_size_byte + tix.storage.trans_size_byte,
 		                                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -213,6 +212,39 @@ static unsigned long WINAPI render_run(void *param)
 		ReadFileResult file = file_read(file_path);
 
 		while (tix.is_running) {
+			// =============================================================================
+			// Input
+			// =============================================================================
+			int notches = 0;
+
+			// Process POSTED messages
+			MSG msg;
+			// TODO(fredy): limit the iterations of this loop
+			while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+				switch (msg.message) {
+				case WM_QUIT: {
+					// The WM_QUIT message is not associated with a window and therefore will never be received through a
+					// window's window procedure. It is retrieved only by the GetMessage or PeekMessage functions
+					tix.is_running = 0U;
+				} break;
+				case WM_MOUSEWHEEL: {
+					int delta = GET_WHEEL_DELTA_WPARAM(msg.wParam);
+					// A "notch" refers to one discrete click/detent of a physical mouse wheel
+					notches = delta / WHEEL_DELTA;
+				} break;
+				case WM_KEYDOWN:
+				case WM_CHAR: {
+					LOG_TRACE("A char arrived");
+				} break;
+				case WM_SIZE: {
+					// Keep it for awake
+				} break;
+				default: {
+					assert(false && "unexpected message arrived to the render thread");
+				} break;
+				}
+			}
+
 			// =============================================================================
 			// Window
 			// =============================================================================
@@ -231,11 +263,9 @@ static unsigned long WINAPI render_run(void *param)
 			if (new_width_px != backbuffer.width_px || new_height_px != backbuffer.height_px) {
 				void *new_buf = nullptr;
 				if (new_buf_size_byte > 0) {
-					new_buf = VirtualAlloc(nullptr, new_buf_size_byte, MEM_RESERVE | MEM_COMMIT,
-					                       PAGE_READWRITE);
+					new_buf = VirtualAlloc(nullptr, new_buf_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 					if (!new_buf) {
-						LOG_ERROR("unable to allocate %zu bytes for the backbuffer",
-						          new_buf_size_byte);
+						LOG_ERROR("unable to allocate %zu bytes for the backbuffer", new_buf_size_byte);
 						assert(false && "unable to allocate memory for the backbuffer");
 					}
 				}
@@ -243,8 +273,7 @@ static unsigned long WINAPI render_run(void *param)
 				if (new_buf || new_buf_size_byte == 0) {
 					if (backbuffer.buf && !VirtualFree(backbuffer.buf, 0, MEM_RELEASE)) {
 						LOG_ERROR("unable to deallocate memory of the previous backbuffer");
-						assert(false &&
-						       "unable to deallocate memory of the previous backbuffer");
+						assert(false && "unable to deallocate memory of the previous backbuffer");
 					}
 
 					backbuffer.buf = new_buf;
@@ -255,52 +284,22 @@ static unsigned long WINAPI render_run(void *param)
 			}
 
 			// =============================================================================
-			// Input
+			// Update
 			// =============================================================================
-
-			// Process POSTED messages
-			MSG msg;
-			// TODO(fredy): limit the iterations of this loop
-			while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
-				switch (msg.message) {
-				case WM_QUIT: {
-					// The WM_QUIT message is not associated with a window and therefore will never be received through a
-					// window's window procedure. It is retrieved only by the GetMessage or PeekMessage functions
-					tix.is_running = 0U;
-				} break;
-				case WM_MOUSEWHEEL: {
-					int delta = GET_WHEEL_DELTA_WPARAM(msg.wParam);
-					// A "notch" refers to one discrete click/detent of a physical mouse wheel
-					int notches = delta / WHEEL_DELTA;
-					if (notches > 0) {
-						if (tix.scroll_offset > (unsigned)notches) {
-							tix.scroll_offset -= (unsigned)notches;
-						} else {
-							tix.scroll_offset = 0;
-						}
-					} else if (notches < 0) {
-						tix.scroll_offset += (unsigned)-notches;
-						size_t max_scroll_offset = tix.lines_count > tix.visible_lines ?
-						                                   tix.lines_count - tix.visible_lines :
-						                                   0;
-						if (tix.scroll_offset > max_scroll_offset) {
-							tix.scroll_offset = max_scroll_offset;
-						}
-					}
-				} break;
-				case WM_KEYDOWN:
-				case WM_CHAR: {
-					LOG_TRACE("A char arrived");
-				} break;
-				case WM_SIZE: {
-					// Keep it for awake
-				} break;
-				default: {
-					assert(false && "unexpected message arrived to the render thread");
-				} break;
+			if (notches > 0) {
+				if (tix.scroll_offset > (unsigned)notches) {
+					tix.scroll_offset -= (unsigned)notches;
+				} else {
+					tix.scroll_offset = 0;
+				}
+			} else if (notches < 0) {
+				tix.scroll_offset += (unsigned)-notches;
+				size_t max_scroll_offset = tix.lines_count > tix.visible_lines ? tix.lines_count - tix.visible_lines :
+				                                                                 0;
+				if (tix.scroll_offset > max_scroll_offset) {
+					tix.scroll_offset = max_scroll_offset;
 				}
 			}
-
 			// =============================================================================
 			// Segmentation
 			// =============================================================================
@@ -310,17 +309,8 @@ static unsigned long WINAPI render_run(void *param)
 			// =============================================================================
 
 			// =============================================================================
-			// Rasterization
-			// =============================================================================
-
-			// Store atlas tiles as 8-bit coverage/alpha, not pre-colored RGB. Same reasoning as the GPU shader:
-			// one grayscale glyph tile serves any foreground color, computed at blend time
-			// (out = bg + coverage * (fg - bg)), rather than re-rasterizing per color.
-
-			// =============================================================================
 			// Layout
 			// =============================================================================
-
 			if (file.size_byte) {
 				unsigned cell_width_px = 10U;
 				unsigned cell_height_px = 20U;
@@ -337,31 +327,22 @@ static unsigned long WINAPI render_run(void *param)
 							--line_length;
 						}
 
-						if (tix.scroll_offset <= line_idx &&
-						    line_idx < last_visible_line_idx_plus_one) {
+						if (tix.scroll_offset <= line_idx && line_idx < last_visible_line_idx_plus_one) {
 							size_t relative_line_idx = line_idx - tix.scroll_offset;
-							float min_y_px =
-								(float)cell_height_px * (float)relative_line_idx;
+							float min_y_px = (float)cell_height_px * (float)relative_line_idx;
 							float max_y_px = min_y_px + (float)cell_height_px;
 
-							for (uint32_t glyph_idx = 0; glyph_idx < line_length;
-							     ++glyph_idx) {
-								float min_x_px =
-									(float)glyph_idx * (float)cell_width_px;
+							for (uint32_t glyph_idx = 0; glyph_idx < line_length; ++glyph_idx) {
+								float min_x_px = (float)glyph_idx * (float)cell_width_px;
 								float max_x_px = min_x_px + (float)cell_width_px;
 								float red = 1.0F;
 								float green = 1.0F;
 								float blue = 1.0F;
-								if (min_x_px < (float)backbuffer.width_px &&
-								    min_y_px < (float)backbuffer.height_px) {
-									max_x_px = min(max_x_px,
-									               (float)backbuffer.width_px);
-									max_y_px = min(max_y_px,
-									               (float)backbuffer.height_px);
-									bitmap_draw_rectangle(&backbuffer, min_x_px,
-									                      min_y_px, max_x_px,
-									                      max_y_px, red, green,
-									                      blue);
+								if (min_x_px < (float)backbuffer.width_px && min_y_px < (float)backbuffer.height_px) {
+									max_x_px = min(max_x_px, (float)backbuffer.width_px);
+									max_y_px = min(max_y_px, (float)backbuffer.height_px);
+									bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px, red,
+									                      green, blue);
 								}
 							}
 						}
@@ -377,9 +358,19 @@ static unsigned long WINAPI render_run(void *param)
 			}
 
 			// =============================================================================
-			// Present
+			// Rasterization
+			// =============================================================================
+			// Store atlas tiles as 8-bit coverage/alpha, not pre-colored RGB. Same reasoning as the GPU shader:
+			// one grayscale glyph tile serves any foreground color, computed at blend time
+			// (out = bg + coverage * (fg - bg)), rather than re-rasterizing per color.
+
+			// =============================================================================
+			// Composition
 			// =============================================================================
 
+			// =============================================================================
+			// Present
+			// =============================================================================
 			if (backbuffer.buf) {
 				bitmap_info.bmiHeader.biWidth = (long)backbuffer.width_px;
 				bitmap_info.bmiHeader.biHeight = -(long)backbuffer.height_px;
@@ -439,8 +430,8 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		GetMessageA(&msg, nullptr, 0, 0);
 		TranslateMessage(&msg);
 
-		if (msg.message == WM_CHAR || msg.message == WM_KEYDOWN || msg.message == WM_QUIT ||
-		    msg.message == WM_SIZE || msg.message == WM_MOUSEWHEEL) {
+		if (msg.message == WM_CHAR || msg.message == WM_KEYDOWN || msg.message == WM_QUIT || msg.message == WM_SIZE ||
+		    msg.message == WM_MOUSEWHEEL) {
 			PostThreadMessageA(g_render_thread_id, msg.message, msg.wParam, msg.lParam);
 		} else {
 			DispatchMessageA(&msg);
