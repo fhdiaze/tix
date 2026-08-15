@@ -226,6 +226,7 @@ static unsigned long WINAPI render_run(void *param)
 
 		const char *file_path = "./test.txt";
 		ReadFileResult file = {};
+		FILETIME file_previous_write_time = {};
 
 		while (tix.is_running) {
 			// =============================================================================
@@ -275,11 +276,10 @@ static unsigned long WINAPI render_run(void *param)
 			unsigned new_width_px = (unsigned)(client_rect.right - client_rect.left);
 			unsigned new_height_px = (unsigned)(client_rect.bottom - client_rect.top);
 
-			size_t new_buf_size_byte =
-				(size_t)new_width_px * (size_t)new_height_px * (size_t)backbuffer.pixel_size_byte;
-
 			if (new_width_px != backbuffer.width_px || new_height_px != backbuffer.height_px) {
 				void *new_buf = nullptr;
+				size_t new_buf_size_byte =
+					(size_t)new_width_px * (size_t)new_height_px * (size_t)backbuffer.pixel_size_byte;
 				if (new_buf_size_byte > 0) {
 					new_buf = VirtualAlloc(nullptr, new_buf_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 					if (!new_buf) {
@@ -304,125 +304,136 @@ static unsigned long WINAPI render_run(void *param)
 				}
 			}
 
-			// =============================================================================
-			// Update
-			// =============================================================================
-			unsigned cell_width_px = 10U;
-			unsigned cell_height_px = 20U;
-			unsigned visible_lines = (unsigned)floorf((float)backbuffer.height_px / (float)cell_height_px);
+			if (backbuffer.buf) {
+				// =============================================================================
+				// Update
+				// =============================================================================
+				unsigned cell_width_px = 10U;
+				unsigned cell_height_px = 20U;
+				unsigned visible_lines = (unsigned)floorf((float)backbuffer.height_px / (float)cell_height_px);
 
-			if (notches > 0) {
-				if (tix.scroll_offset > (unsigned)notches) {
-					tix.scroll_offset -= (unsigned)notches;
-				} else {
-					tix.scroll_offset = 0;
-				}
-			} else if (notches < 0) {
-				tix.scroll_offset += (unsigned)-notches;
-				size_t max_scroll_offset = tix.lines_count > visible_lines ? tix.lines_count - visible_lines : 0;
-				if (tix.scroll_offset > max_scroll_offset) {
-					tix.scroll_offset = max_scroll_offset;
-				}
-			}
-
-			tix.scroll_offset = max(tix.scroll_offset, 0);
-			tix.scroll_offset = min(tix.scroll_offset, tix.lines_count - visible_lines);
-
-			// =============================================================================
-			// Segmentation
-			// =============================================================================
-
-			FILETIME last_write = {};
-			if (!file.base_address || file_get_last_write_time(file_path, &last_write)) {
-				if (file.base_address) {
-					file_free_memory(file.base_address);
-				}
-				file = file_read(file_path);
-			}
-
-			// =============================================================================
-			// Shaping
-			// =============================================================================
-
-			// =============================================================================
-			// Layout
-			// =============================================================================
-			if (backbuffer.width_px > 0 && backbuffer.height_px > 0) {
-				bitmap_draw_rectangle(&backbuffer, 0.0F, 0.0F, (float)backbuffer.width_px, (float)backbuffer.height_px,
-				                      BACKGROUND_COLOR_R / 255.0F, BACKGROUND_COLOR_G / 255.0F,
-				                      BACKGROUND_COLOR_B / 255.0F);
-			}
-
-			if (file.size_byte) {
-				size_t line_idx = 0;
-				char *line_start = file.base_address;
-				char *file_end_plus_one = (char *)file.base_address + file.size_byte;
-				size_t last_visible_line_idx_plus_one = tix.scroll_offset + visible_lines;
-
-				for (char *p = file.base_address; p <= file_end_plus_one; ++p) {
-					if (p == file_end_plus_one || *p == '\n') {
-						size_t line_length = (size_t)(p - line_start);
-						if (line_length > 0 && line_start[line_length - 1] == '\r') {
-							--line_length;
-						}
-
-						if (tix.scroll_offset <= line_idx && line_idx < last_visible_line_idx_plus_one) {
-							size_t relative_line_idx = line_idx - tix.scroll_offset;
-							float min_y_px = (float)cell_height_px * (float)relative_line_idx;
-							float max_y_px = min_y_px + (float)cell_height_px;
-
-							for (uint32_t glyph_idx = 0; glyph_idx < line_length; ++glyph_idx) {
-								float min_x_px = (float)glyph_idx * (float)cell_width_px;
-								float max_x_px = min_x_px + (float)cell_width_px;
-								float red = 1.0F;
-								float green = 1.0F;
-								float blue = 1.0F;
-
-								if (glyph_idx == line_length - 1 &&
-								    max_x_px > (float)cell_width_px * (float)line_length) {
-									assert(false);
-								}
-
-								if (min_x_px < (float)backbuffer.width_px && min_y_px < (float)backbuffer.height_px) {
-									max_x_px = min(max_x_px, (float)backbuffer.width_px);
-									max_y_px = min(max_y_px, (float)backbuffer.height_px);
-
-									if (line_start[glyph_idx] == ' ') {
-										red = BACKGROUND_COLOR_R / 255.0F;
-										green = BACKGROUND_COLOR_G / 255.0F;
-										blue = BACKGROUND_COLOR_B / 255.0F;
-									}
-									bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px, red,
-									                      green, blue);
-								}
-							}
-						}
-
-						++line_idx;
-						line_start = p + 1;
+				if (notches > 0) {
+					if (tix.scroll_offset > (unsigned)notches) {
+						tix.scroll_offset -= (unsigned)notches;
+					} else {
+						tix.scroll_offset = 0;
+					}
+				} else if (notches < 0) {
+					tix.scroll_offset += (unsigned)-notches;
+					size_t max_scroll_offset = tix.lines_count > visible_lines ? tix.lines_count - visible_lines : 0;
+					if (tix.scroll_offset > max_scroll_offset) {
+						tix.scroll_offset = max_scroll_offset;
 					}
 				}
 
-				tix.lines_count = line_idx;
-			} else {
-				LOG_FATAL("The file %s could not be open\n", file_path);
-			}
+				tix.scroll_offset = max(tix.scroll_offset, 0);
+				tix.scroll_offset = min(tix.scroll_offset, tix.lines_count - visible_lines);
 
-			// =============================================================================
-			// Rasterization
-			// =============================================================================
-			// Store atlas tiles as 8-bit coverage/alpha, not pre-coloured RGB. Same reasoning as the GPU shader:
-			// one grayscale glyph tile serves any foreground color, computed at blend time
-			// (out = bg + coverage * (fg - bg)), rather than re-rasterizing per color.
+				// =============================================================================
+				// Segmentation
+				// =============================================================================
 
-			// =============================================================================
-			// Composition
-			// =============================================================================
+				FILETIME current_write_time = {};
+				if (!file.base_address) {
+					file = file_read(file_path);
+					if (file.base_address) {
+						file_get_last_write_time(file_path, &file_previous_write_time);
+					} else {
+						LOG_ERROR("The file %s could not be open\n", file_path);
+					}
+				} else if (file_get_last_write_time(file_path, &current_write_time)) {
+					if (CompareFileTime(&current_write_time, &file_previous_write_time) > 0) {
+						file_free_memory(file.base_address);
 
-			// =============================================================================
-			// Present
-			// =============================================================================
-			if (backbuffer.buf) {
+						file = file_read(file_path);
+
+						if (file.base_address) {
+							file_previous_write_time = current_write_time;
+						} else {
+							LOG_ERROR("The file %s could not be open\n", file_path);
+						}
+					}
+				}
+
+				// =============================================================================
+				// Shaping
+				// =============================================================================
+
+				// =============================================================================
+				// Layout
+				// =============================================================================
+				bitmap_draw_rectangle(&backbuffer, 0.0F, 0.0F, (float)backbuffer.width_px, (float)backbuffer.height_px,
+				                      BACKGROUND_COLOR_R / 255.0F, BACKGROUND_COLOR_G / 255.0F,
+				                      BACKGROUND_COLOR_B / 255.0F);
+
+				if (file.base_address) {
+					size_t line_idx = 0;
+					char *line_start = file.base_address;
+					char *file_end_plus_one = (char *)file.base_address + file.size_byte;
+					size_t last_visible_line_idx_plus_one = tix.scroll_offset + visible_lines;
+
+					for (char *p = file.base_address; p <= file_end_plus_one; ++p) {
+						if (p == file_end_plus_one || *p == '\n') {
+							size_t line_length = (size_t)(p - line_start);
+							if (line_length > 0 && line_start[line_length - 1] == '\r') {
+								--line_length;
+							}
+
+							if (tix.scroll_offset <= line_idx && line_idx < last_visible_line_idx_plus_one) {
+								size_t relative_line_idx = line_idx - tix.scroll_offset;
+								float min_y_px = (float)cell_height_px * (float)relative_line_idx;
+								float max_y_px = min_y_px + (float)cell_height_px;
+
+								for (uint32_t glyph_idx = 0; glyph_idx < line_length; ++glyph_idx) {
+									float min_x_px = (float)glyph_idx * (float)cell_width_px;
+									float max_x_px = min_x_px + (float)cell_width_px;
+									float red = 1.0F;
+									float green = 1.0F;
+									float blue = 1.0F;
+
+									if (glyph_idx == line_length - 1 &&
+									    max_x_px > (float)cell_width_px * (float)line_length) {
+										assert(false);
+									}
+
+									if (min_x_px < (float)backbuffer.width_px &&
+									    min_y_px < (float)backbuffer.height_px) {
+										max_x_px = min(max_x_px, (float)backbuffer.width_px);
+										max_y_px = min(max_y_px, (float)backbuffer.height_px);
+
+										if (line_start[glyph_idx] == ' ') {
+											red = BACKGROUND_COLOR_R / 255.0F;
+											green = BACKGROUND_COLOR_G / 255.0F;
+											blue = BACKGROUND_COLOR_B / 255.0F;
+										}
+										bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px, red,
+										                      green, blue);
+									}
+								}
+							}
+
+							++line_idx;
+							line_start = p + 1;
+						}
+					}
+
+					tix.lines_count = line_idx;
+				}
+
+				// =============================================================================
+				// Rasterization
+				// =============================================================================
+				// Store atlas tiles as 8-bit coverage/alpha, not pre-coloured RGB. Same reasoning as the GPU shader:
+				// one grayscale glyph tile serves any foreground color, computed at blend time
+				// (out = bg + coverage * (fg - bg)), rather than re-rasterizing per color.
+
+				// =============================================================================
+				// Composition
+				// =============================================================================
+
+				// =============================================================================
+				// Present
+				// =============================================================================
 				bitmap_info.bmiHeader.biWidth = (long)backbuffer.width_px;
 				bitmap_info.bmiHeader.biHeight = -(long)backbuffer.height_px;
 				SetDIBitsToDevice(dc_handle, 0, 0, backbuffer.width_px, backbuffer.height_px, 0, 0, 0,
