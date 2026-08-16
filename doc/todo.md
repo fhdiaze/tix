@@ -40,8 +40,8 @@ spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 - [ ] Line index: scan for line breaks, store start/end offset per line.
 - [ ] Define the `cell` struct (codepoint, fg, bg, flags).
 - [ ] Allocate the cell grid sized in columns/rows (not pixels).
-- [ ] Layout pass: fill visible lines into the grid.
-- [ ] Render one solid bg-colored rectangle per cell (no glyphs yet).
+- [x] Layout pass: fill visible lines into the grid.
+- [x] Render one solid bg-colored rectangle per cell (no glyphs yet).
 
 ## Stage 2 — Glyph atlas + real text
 

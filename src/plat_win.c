@@ -329,10 +329,6 @@ static unsigned long WINAPI render_run(void *param)
 				tix.scroll_offset = max(tix.scroll_offset, 0);
 				tix.scroll_offset = min(tix.scroll_offset, tix.lines_count - visible_lines);
 
-				// =============================================================================
-				// Segmentation
-				// =============================================================================
-
 				FILETIME current_write_time = {};
 				if (!file.base_address) {
 					file = file_read(file_path);
@@ -354,6 +350,10 @@ static unsigned long WINAPI render_run(void *param)
 						}
 					}
 				}
+
+				// =============================================================================
+				// Segmentation
+				// =============================================================================
 
 				// =============================================================================
 				// Shaping
@@ -391,15 +391,13 @@ static unsigned long WINAPI render_run(void *param)
 									float green = 1.0F;
 									float blue = 1.0F;
 
-									if (glyph_idx == line_length - 1 &&
-									    max_x_px > (float)cell_width_px * (float)line_length) {
-										assert(false);
-									}
-
 									if (min_x_px < (float)backbuffer.width_px &&
 									    min_y_px < (float)backbuffer.height_px) {
 										max_x_px = min(max_x_px, (float)backbuffer.width_px);
 										max_y_px = min(max_y_px, (float)backbuffer.height_px);
+
+										// rotation, shear, scale: { WORD fract; short value; }
+										static const MAT2 identity = { { 0, 1 }, { 0, 0 }, { 0, 0 }, { 0, 1 } };
 
 										if (line_start[glyph_idx] == ' ') {
 											red = BACKGROUND_COLOR_R / 255.0F;
