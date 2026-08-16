@@ -226,10 +226,10 @@ inline Vtwo vtwo_normalize(Vtwo a)
 // Memory
 // =============================================================================
 
-#define KB_TO_BYTES(_pr_v) ((_pr_v) * 1024)
-#define MB_TO_BYTES(_pr_v) (KB_TO_BYTES(_pr_v) * 1024)
-#define GB_TO_BYTES(_pr_v) (MB_TO_BYTES(_pr_v) * 1024)
-#define TB_TO_BYTES(_pr_v) (GB_TO_BYTES(_pr_v) * 1024)
+#define KB_TO_BYTE(_pr_v) ((_pr_v) * 1024)
+#define MB_TO_BYTE(_pr_v) (KB_TO_BYTE(_pr_v) * 1024)
+#define GB_TO_BYTE(_pr_v) (MB_TO_BYTE(_pr_v) * 1024)
+#define TB_TO_BYTE(_pr_v) (GB_TO_BYTE(_pr_v) * 1024)
 
 #define ARENA_PUSH_ARRAY(arena, type, count) (type *)arena_push((arena), sizeof(type) * (count))
 #define ARENA_PUSH_STRUCT(arena, type) (type *)arena_push((arena), sizeof(type))
@@ -238,35 +238,41 @@ inline Vtwo vtwo_normalize(Vtwo a)
 #define ARENA_PUSH_STRUCT_ZERO(arena, type) (type *)arena_push_zero((arena), sizeof(type))
 
 typedef struct Arena {
-	size_t capacity_bytes;
-	unsigned char *base_address;
-	size_t used_bytes;
+	size_t buf_size_byte;
+	unsigned char *buf;
+	size_t offset_byte;
+	size_t prev_offset_byte;
 } Arena;
 
-void arena_init(Arena *restrict arena, const size_t size_bytes, unsigned char *const restrict base)
+void arena_init(Arena *restrict arena, const size_t buf_size_byte, unsigned char *const restrict buf)
 {
-	arena->capacity_bytes = size_bytes;
-	arena->base_address = base;
-	arena->used_bytes = 0;
+	arena->buf_size_byte = buf_size_byte;
+	arena->buf = buf;
+	arena->offset_byte = 0;
 }
 
-void *arena_push(Arena *arena, size_t size_bytes)
+void *arena_push(Arena *arena, size_t size_byte)
 {
-	assert(arena->used_bytes + size_bytes <= arena->capacity_bytes);
+	assert(arena->offset_byte + size_byte <= arena->buf_size_byte);
 
-	void *result = arena->base_address + arena->used_bytes;
-	arena->used_bytes += size_bytes;
+	void *result = arena->buf + arena->offset_byte;
+	arena->offset_byte += size_byte;
 
 	return result;
 }
 
-void *arena_push_zero(Arena *arena, size_t size_bytes)
+void *arena_push_zero(Arena *arena, size_t size_byte)
 {
-	void *result = arena_push(arena, size_bytes);
+	void *result = arena_push(arena, size_byte);
 
-	memset(result, 0, size_bytes);
+	memset(result, 0, size_byte);
 
 	return nullptr;
+}
+
+void arena_reset(Arena *arena)
+{
+	arena->offset_byte = 0;
 }
 
 // =============================================================================

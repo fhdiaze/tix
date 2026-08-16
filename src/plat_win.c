@@ -37,7 +37,7 @@ typedef struct Bitmap {
 
 typedef struct ReadFileResult {
 	size_t size_byte;
-	void *base_address;
+	void *buf;
 } ReadFileResult;
 
 // TODO(fredy):  - remove this global
@@ -166,18 +166,18 @@ static ReadFileResult file_read(const char *const path)
 		LARGE_INTEGER filesize_struct;
 		if (GetFileSizeEx(handle, &filesize_struct)) {
 			uint32_t file_size_byte = (uint32_t)(filesize_struct.QuadPart);
-			result.base_address = VirtualAlloc(nullptr, file_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-			if (result.base_address) {
+			result.buf = VirtualAlloc(nullptr, file_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+			if (result.buf) {
 				DWORD read_size_byte = 0;
-				if (ReadFile(handle, result.base_address, file_size_byte, &read_size_byte, nullptr) ||
+				if (ReadFile(handle, result.buf, file_size_byte, &read_size_byte, nullptr) ||
 				    read_size_byte == file_size_byte) {
 					result.size_byte = file_size_byte;
 				} else {
 					LOG_ERROR("failed to read the file: %s", path);
 
-					file_free_memory(result.base_address);
+					file_free_memory(result.buf);
 
-					result.base_address = nullptr;
+					result.buf = nullptr;
 					result.size_byte = 0;
 				}
 			} else {
@@ -205,7 +205,7 @@ static unsigned long WINAPI render_run(void *param)
 			.is_running = 1U,
 			.context_path = "",
 			.lines_count = 20,
-			.storage = { .perm_size_byte = MB_TO_BYTES(64ULL), .trans_size_byte = GB_TO_BYTES(1ULL), },
+			.storage = { .perm_size_byte = MB_TO_BYTE(64ULL), .trans_size_byte = GB_TO_BYTE(1ULL), },
 		};
 
 		Bitmap backbuffer = {
@@ -217,6 +217,8 @@ static unsigned long WINAPI render_run(void *param)
 									   .biBitCount = CHAR_BIT * backbuffer.pixel_size_byte,
 									   .biCompression = BI_RGB,
 								   } };
+
+		// NOLINTNEXTLINE(performance-no-int-to-ptr): fixed base address for deterministic pointers across runs
 		tix.storage.perm_base_address = VirtualAlloc(MEMORY_BASE_ADDRESS,
 		                                             tix.storage.perm_size_byte + tix.storage.trans_size_byte,
 		                                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
@@ -224,9 +226,27 @@ static unsigned long WINAPI render_run(void *param)
 			tix.storage.trans_base_address = tix.storage.perm_base_address + tix.storage.perm_size_byte;
 		}
 
+		Arena perm_arena = {};
+		arena_init(&perm_arena, tix.storage.perm_size_byte, tix.storage.perm_base_address);
+
+		Arena trans_arena = {};
+		arena_init(&trans_arena, tix.storage.trans_size_byte, tix.storage.trans_base_address);
+
+		assert(trans_arena.buf);
+
 		const char *file_path = "./test.txt";
 		ReadFileResult file = {};
 		FILETIME file_previous_write_time = {};
+
+		HDC font_dc = CreateCompatibleDC(nullptr);
+		HFONT font = CreateFontA(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, ANSI_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+		                         ANTIALIASED_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
+		SelectObject(font_dc, font);
+		TEXTMETRICA tm;
+		GetTextMetricsA(font_dc, &tm);
+
+		unsigned cell_width_px = (unsigned)abs(tm.tmMaxCharWidth);
+		unsigned cell_height_px = (unsigned)abs(tm.tmHeight);
 
 		while (tix.is_running) {
 			// =============================================================================
@@ -308,8 +328,6 @@ static unsigned long WINAPI render_run(void *param)
 				// =============================================================================
 				// Update
 				// =============================================================================
-				unsigned cell_width_px = 10U;
-				unsigned cell_height_px = 20U;
 				unsigned visible_lines = (unsigned)floorf((float)backbuffer.height_px / (float)cell_height_px);
 
 				if (notches > 0) {
@@ -330,20 +348,20 @@ static unsigned long WINAPI render_run(void *param)
 				tix.scroll_offset = min(tix.scroll_offset, tix.lines_count - visible_lines);
 
 				FILETIME current_write_time = {};
-				if (!file.base_address) {
+				if (!file.buf) {
 					file = file_read(file_path);
-					if (file.base_address) {
+					if (file.buf) {
 						file_get_last_write_time(file_path, &file_previous_write_time);
 					} else {
 						LOG_ERROR("The file %s could not be open\n", file_path);
 					}
 				} else if (file_get_last_write_time(file_path, &current_write_time)) {
 					if (CompareFileTime(&current_write_time, &file_previous_write_time) > 0) {
-						file_free_memory(file.base_address);
+						file_free_memory(file.buf);
 
 						file = file_read(file_path);
 
-						if (file.base_address) {
+						if (file.buf) {
 							file_previous_write_time = current_write_time;
 						} else {
 							LOG_ERROR("The file %s could not be open\n", file_path);
@@ -366,52 +384,70 @@ static unsigned long WINAPI render_run(void *param)
 				                      BACKGROUND_COLOR_R / 255.0F, BACKGROUND_COLOR_G / 255.0F,
 				                      BACKGROUND_COLOR_B / 255.0F);
 
-				if (file.base_address) {
+				if (file.buf) {
 					size_t line_idx = 0;
-					char *line_start = file.base_address;
-					char *file_end_plus_one = (char *)file.base_address + file.size_byte;
+					size_t column_idx = 0;
+					char *line = file.buf;
+					char *file_end_plus_one = (char *)file.buf + file.size_byte;
 					size_t last_visible_line_idx_plus_one = tix.scroll_offset + visible_lines;
 
-					for (char *p = file.base_address; p <= file_end_plus_one; ++p) {
-						if (p == file_end_plus_one || *p == '\n') {
-							size_t line_length = (size_t)(p - line_start);
-							if (line_length > 0 && line_start[line_length - 1] == '\r') {
-								--line_length;
-							}
+					for (char *p = file.buf; p < file_end_plus_one; ++p) {
+						if (line_idx >= tix.scroll_offset) {
+							if (line_idx < last_visible_line_idx_plus_one) {
+								if (*p == '\n') {
+									++line_idx;
+									line = p + 1;
 
-							if (tix.scroll_offset <= line_idx && line_idx < last_visible_line_idx_plus_one) {
-								size_t relative_line_idx = line_idx - tix.scroll_offset;
-								float min_y_px = (float)cell_height_px * (float)relative_line_idx;
-								float max_y_px = min_y_px + (float)cell_height_px;
+									column_idx = 0;
+								} else if (*p != '\r') {
+									// rotation, shear, scale: { WORD fract; short value; }
+									static const MAT2 identity = { { 0, 1 }, { 0, 0 }, { 0, 0 }, { 0, 1 } };
 
-								for (uint32_t glyph_idx = 0; glyph_idx < line_length; ++glyph_idx) {
-									float min_x_px = (float)glyph_idx * (float)cell_width_px;
-									float max_x_px = min_x_px + (float)cell_width_px;
-									float red = 1.0F;
-									float green = 1.0F;
-									float blue = 1.0F;
-
-									if (min_x_px < (float)backbuffer.width_px &&
-									    min_y_px < (float)backbuffer.height_px) {
-										max_x_px = min(max_x_px, (float)backbuffer.width_px);
-										max_y_px = min(max_y_px, (float)backbuffer.height_px);
-
-										// rotation, shear, scale: { WORD fract; short value; }
-										static const MAT2 identity = { { 0, 1 }, { 0, 0 }, { 0, 0 }, { 0, 1 } };
-
-										if (line_start[glyph_idx] == ' ') {
-											red = BACKGROUND_COLOR_R / 255.0F;
-											green = BACKGROUND_COLOR_G / 255.0F;
-											blue = BACKGROUND_COLOR_B / 255.0F;
-										}
-										bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px, red,
-										                      green, blue);
+									GLYPHMETRICS glyph_metrics;
+									DWORD glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)*p, GGO_GRAY8_BITMAP,
+									                                         &glyph_metrics, 0, nullptr, &identity);
+									if (glyph_size_byte != GDI_ERROR && glyph_size_byte &&
+									    trans_arena.offset_byte + glyph_size_byte <= trans_arena.buf_size_byte) {
+										void *glyph_buf = arena_push_zero(&trans_arena, glyph_size_byte);
+										glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)(unsigned char)*p,
+										                                   GGO_GRAY8_BITMAP, &glyph_metrics,
+										                                   glyph_size_byte, glyph_buf, &identity);
 									}
-								}
-							}
 
-							++line_idx;
-							line_start = p + 1;
+									if (glyph_size_byte != GDI_ERROR && glyph_size_byte) {
+										size_t relative_line_idx = line_idx - tix.scroll_offset;
+
+										float min_y_px = (float)cell_height_px * (float)relative_line_idx;
+										float max_y_px = min_y_px + (float)cell_height_px;
+										float min_x_px = (float)column_idx * (float)cell_width_px;
+										float max_x_px = min_x_px + (float)cell_width_px;
+
+										float red = 1.0F;
+										float green = 1.0F;
+										float blue = 1.0F;
+
+										if (min_x_px < (float)backbuffer.width_px &&
+										    min_y_px < (float)backbuffer.height_px) {
+											max_x_px = min(max_x_px, (float)backbuffer.width_px);
+											max_y_px = min(max_y_px, (float)backbuffer.height_px);
+
+											if (line[column_idx] == ' ') {
+												red = BACKGROUND_COLOR_R / 255.0F;
+												green = BACKGROUND_COLOR_G / 255.0F;
+												blue = BACKGROUND_COLOR_B / 255.0F;
+											}
+											bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px,
+											                      red, green, blue);
+										}
+									}
+
+									arena_reset(&trans_arena);
+
+									++column_idx;
+								}
+							} else {
+								break;
+							}
 						}
 					}
 

@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #if DEBUG
-#define MEMORY_BASE_ADDRESS ((void *)TB_TO_BYTES(2))
+#define MEMORY_BASE_ADDRESS ((void *)TB_TO_BYTE(2ULL))
 #else
 #define MEMORY_BASE_ADDRESS (nullptr)
 #endif // MEMORY_BASE_ADDRESS
@@ -73,13 +73,6 @@ typedef struct Grid {
 } Grid;
 
 typedef struct Tix {
-	uint8_t is_running;
-
-	CursorMode cursor_mode;
-
-	ContextMode context_mode;
-	char context_path[MAX_FILE_PATH];
-
 	size_t scroll_offset;
 	size_t lines_count;
 
@@ -88,6 +81,13 @@ typedef struct Tix {
 
 	Grid grid;
 	Storage storage;
+
+	ContextMode context_mode;
+	CursorMode cursor_mode;
+
+	uint8_t is_running;
+
+	char context_path[MAX_FILE_PATH];
 } Tix;
 
 void tix_init(Tix *tix);
