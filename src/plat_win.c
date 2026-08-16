@@ -403,12 +403,13 @@ static unsigned long WINAPI render_run(void *param)
 									// rotation, shear, scale: { WORD fract; short value; }
 									static const MAT2 identity = { { 0, 1 }, { 0, 0 }, { 0, 0 }, { 0, 1 } };
 
+									void *glyph_buf = nullptr;
 									GLYPHMETRICS glyph_metrics;
 									DWORD glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)*p, GGO_GRAY8_BITMAP,
 									                                         &glyph_metrics, 0, nullptr, &identity);
 									if (glyph_size_byte != GDI_ERROR && glyph_size_byte &&
 									    trans_arena.offset_byte + glyph_size_byte <= trans_arena.buf_size_byte) {
-										void *glyph_buf = arena_push_zero(&trans_arena, glyph_size_byte);
+										glyph_buf = arena_push_zero(&trans_arena, glyph_size_byte);
 										glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)(unsigned char)*p,
 										                                   GGO_GRAY8_BITMAP, &glyph_metrics,
 										                                   glyph_size_byte, glyph_buf, &identity);
