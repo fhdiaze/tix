@@ -423,22 +423,22 @@ static unsigned long WINAPI render_run(void *param)
 										float min_x_px = (float)column_idx * (float)cell_width_px;
 										float max_x_px = min_x_px + (float)cell_width_px;
 
-										unsigned glyph_width = 0;
+										unsigned glyph_width_byte = glyph_metrics.gmBlackBoxX;
+										unsigned glyph_height_byte = glyph_metrics.gmBlackBoxY;
 
-										unsigned backbuffer_pitch = backbuffer.width_px * backbuffer.pixel_size_byte;
-										unsigned char *pixel = (unsigned char *)backbuffer.buf +
-										                       (size_t)floorf(min_x_px) +
-										                       backbuffer_pitch * (size_t)floorf(min_y_px);
-										unsigned width = 0;
-										unsigned height = 0;
-										for (size_t y = 0; y < height; ++y) {
-											for (size_t x = 0; x < width; ++x) {
-												uint32_t *target_pixel = (uint32_t *)pixel;
+										uint32_t *target_pixel = (uint32_t *)backbuffer.buf + (size_t)floorf(min_x_px) +
+										                         backbuffer.width_px * (size_t)floorf(min_y_px);
+										for (size_t y = 0; y < glyph_height_byte; ++y) {
+											for (size_t x = 0; x < glyph_width_byte; ++x) {
 												unsigned char *source_alpha =
-													(unsigned char *)glyph_buf + x + y * glyph_width;
+													(unsigned char *)glyph_buf + x + y * glyph_width_byte;
 
-												*target_pixel = ((uint32_t)*source_alpha) << 16U | 0xFFFFFF;
+												*target_pixel = ((uint32_t)*source_alpha) << 24U | 0x00FFFFFFU;
+
+												++target_pixel;
 											}
+
+											target_pixel += backbuffer.width_px - glyph_width_byte + 1;
 										}
 
 										float red = 1.0F;
