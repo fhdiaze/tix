@@ -267,7 +267,7 @@ void *arena_push_zero(Arena *arena, size_t size_byte)
 
 	memset(result, 0, size_byte);
 
-	return nullptr;
+	return result;
 }
 
 void arena_reset(Arena *arena)

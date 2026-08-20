@@ -22,7 +22,7 @@
 #define BACKGROUND_COLOR_B 48
 
 /**
- * @brief (0,0) is on the top left corner.
+ * @brief (0,0) is on the top left corner. Top-To-Bottom.
  * The byte order in a register (little endian) is AA RR GG BB
  */
 typedef struct Bitmap {
@@ -391,7 +391,8 @@ static unsigned long WINAPI render_run(void *param)
 					char *file_end_plus_one = (char *)file.buf + file.size_byte;
 					size_t last_visible_line_idx_plus_one = tix.scroll_offset + visible_lines;
 
-					for (char *p = file.buf; p < file_end_plus_one; ++p) {
+					unsigned t = 0;
+					for (char *p = file.buf; p < file_end_plus_one && t < 10; ++p) {
 						if (line_idx >= tix.scroll_offset) {
 							if (line_idx < last_visible_line_idx_plus_one) {
 								if (*p == '\n') {
@@ -426,38 +427,43 @@ static unsigned long WINAPI render_run(void *param)
 										unsigned glyph_width_byte = glyph_metrics.gmBlackBoxX;
 										unsigned glyph_height_byte = glyph_metrics.gmBlackBoxY;
 
+										uint32_t row_padding_byte =
+											(sizeof(DWORD) - (size_t)glyph_width_byte % sizeof(DWORD)) % sizeof(DWORD);
+										uint32_t glyph_pitch_byte = glyph_width_byte + row_padding_byte;
+
 										uint32_t *target_pixel = (uint32_t *)backbuffer.buf + (size_t)floorf(min_x_px) +
 										                         backbuffer.width_px * (size_t)floorf(min_y_px);
+										unsigned char *source_gray = (unsigned char *)glyph_buf;
 										for (size_t y = 0; y < glyph_height_byte; ++y) {
 											for (size_t x = 0; x < glyph_width_byte; ++x) {
-												unsigned char *source_alpha =
-													(unsigned char *)glyph_buf + x + y * glyph_width_byte;
-
-												*target_pixel = ((uint32_t)*source_alpha) << 24U | 0x00FFFFFFU;
+												uint32_t alpha = (*source_gray * 255U) / 64U;
+												*target_pixel = alpha*0x00FF0000U << 16U | alpha*0x0000FF00U << 8U | 0x0U ;
 
 												++target_pixel;
+												++source_gray;
 											}
 
-											target_pixel += backbuffer.width_px - glyph_width_byte + 1;
+											target_pixel += backbuffer.width_px - glyph_width_byte;
+											source_gray += glyph_pitch_byte - glyph_width_byte;
 										}
 
-										float red = 1.0F;
-										float green = 1.0F;
-										float blue = 1.0F;
+										// float red = 1.0F;
+										// float green = 1.0F;
+										// float blue = 1.0F;
 
-										if (min_x_px < (float)backbuffer.width_px &&
-										    min_y_px < (float)backbuffer.height_px) {
-											max_x_px = min(max_x_px, (float)backbuffer.width_px);
-											max_y_px = min(max_y_px, (float)backbuffer.height_px);
+										// if (min_x_px < (float)backbuffer.width_px &&
+										//     min_y_px < (float)backbuffer.height_px) {
+										// 	max_x_px = min(max_x_px, (float)backbuffer.width_px);
+										// 	max_y_px = min(max_y_px, (float)backbuffer.height_px);
 
-											if (line[column_idx] == ' ') {
-												red = BACKGROUND_COLOR_R / 255.0F;
-												green = BACKGROUND_COLOR_G / 255.0F;
-												blue = BACKGROUND_COLOR_B / 255.0F;
-											}
-											bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px,
-											                      red, green, blue);
-										}
+										// 	if (line[column_idx] == ' ') {
+										// 		red = BACKGROUND_COLOR_R / 255.0F;
+										// 		green = BACKGROUND_COLOR_G / 255.0F;
+										// 		blue = BACKGROUND_COLOR_B / 255.0F;
+										// 	}
+										// 	bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px,
+										// 	                      red, green, blue);
+										// }
 									}
 
 									arena_reset(&trans_arena);
@@ -468,6 +474,8 @@ static unsigned long WINAPI render_run(void *param)
 								break;
 							}
 						}
+
+						++t;
 					}
 
 					tix.lines_count = line_idx;
