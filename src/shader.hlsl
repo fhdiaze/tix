@@ -4,3 +4,4 @@ struct Cell
     uint foreground;
     uint background;
 }
+

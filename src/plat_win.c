@@ -1,4 +1,5 @@
 #include <dwmapi.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <windows.h>
@@ -26,7 +27,7 @@
  * The byte order in a register (little endian) is AA RR GG BB
  */
 typedef struct Bitmap {
-	void *buf;
+	unsigned char *buf;
 	size_t buf_size_byte;
 
 	unsigned width_px;
@@ -208,13 +209,13 @@ static unsigned long WINAPI render_run(void *param)
 			.storage = { .perm_size_byte = MB_TO_BYTE(64ULL), .trans_size_byte = GB_TO_BYTE(1ULL), },
 		};
 
-		Bitmap backbuffer = {
+		Bitmap backbuf = {
 			.pixel_size_byte = 4,
 		};
 		BITMAPINFO bitmap_info = { .bmiHeader = {
 									   .biSize = sizeof(BITMAPINFOHEADER),
 									   .biPlanes = 1,
-									   .biBitCount = CHAR_BIT * backbuffer.pixel_size_byte,
+									   .biBitCount = CHAR_BIT * backbuf.pixel_size_byte,
 									   .biCompression = BI_RGB,
 								   } };
 
@@ -239,7 +240,7 @@ static unsigned long WINAPI render_run(void *param)
 		FILETIME file_previous_write_time = {};
 
 		HDC font_dc = CreateCompatibleDC(nullptr);
-		HFONT font = CreateFontA(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, ANSI_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+		HFONT font = CreateFontA(-128, 0, 0, 0, FW_NORMAL, 0, 0, 0, ANSI_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
 		                         ANTIALIASED_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
 		SelectObject(font_dc, font);
 		TEXTMETRICA tm;
@@ -296,10 +297,10 @@ static unsigned long WINAPI render_run(void *param)
 			unsigned new_width_px = (unsigned)(client_rect.right - client_rect.left);
 			unsigned new_height_px = (unsigned)(client_rect.bottom - client_rect.top);
 
-			if (new_width_px != backbuffer.width_px || new_height_px != backbuffer.height_px) {
+			if (new_width_px != backbuf.width_px || new_height_px != backbuf.height_px) {
 				void *new_buf = nullptr;
 				size_t new_buf_size_byte =
-					(size_t)new_width_px * (size_t)new_height_px * (size_t)backbuffer.pixel_size_byte;
+					(size_t)new_width_px * (size_t)new_height_px * (size_t)backbuf.pixel_size_byte;
 				if (new_buf_size_byte > 0) {
 					new_buf = VirtualAlloc(nullptr, new_buf_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 					if (!new_buf) {
@@ -309,26 +310,26 @@ static unsigned long WINAPI render_run(void *param)
 				}
 
 				if (new_buf || new_buf_size_byte == 0) {
-					if (backbuffer.buf && !VirtualFree(backbuffer.buf, 0, MEM_RELEASE)) {
+					if (backbuf.buf && !VirtualFree(backbuf.buf, 0, MEM_RELEASE)) {
 						LOG_ERROR("unable to deallocate memory of the previous backbuffer");
 						assert(false && "unable to deallocate memory of the previous backbuffer");
 					}
 
-					backbuffer.buf = new_buf;
-					backbuffer.buf_size_byte = new_buf_size_byte;
-					backbuffer.width_px = new_width_px;
-					backbuffer.height_px = new_height_px;
+					backbuf.buf = new_buf;
+					backbuf.buf_size_byte = new_buf_size_byte;
+					backbuf.width_px = new_width_px;
+					backbuf.height_px = new_height_px;
 				} else {
 					LOG_ERROR("unable to allocate %zu bytes for the backbuffer", new_buf_size_byte);
 					assert(false && "unable to allocate memory for the backbuffer");
 				}
 			}
 
-			if (backbuffer.buf) {
+			if (backbuf.buf) {
 				// =============================================================================
 				// Update
 				// =============================================================================
-				unsigned visible_lines = (unsigned)floorf((float)backbuffer.height_px / (float)cell_height_px);
+				unsigned visible_lines = (unsigned)floorf((float)backbuf.height_px / (float)cell_height_px);
 
 				if (notches > 0) {
 					if (tix.scroll_offset > (unsigned)notches) {
@@ -380,7 +381,7 @@ static unsigned long WINAPI render_run(void *param)
 				// =============================================================================
 				// Layout
 				// =============================================================================
-				bitmap_draw_rectangle(&backbuffer, 0.0F, 0.0F, (float)backbuffer.width_px, (float)backbuffer.height_px,
+				bitmap_draw_rectangle(&backbuf, 0.0F, 0.0F, (float)backbuf.width_px, (float)backbuf.height_px,
 				                      BACKGROUND_COLOR_R / 255.0F, BACKGROUND_COLOR_G / 255.0F,
 				                      BACKGROUND_COLOR_B / 255.0F);
 
@@ -431,20 +432,45 @@ static unsigned long WINAPI render_run(void *param)
 											(sizeof(DWORD) - (size_t)glyph_width_byte % sizeof(DWORD)) % sizeof(DWORD);
 										uint32_t glyph_pitch_byte = glyph_width_byte + row_padding_byte;
 
-										uint32_t *target_pixel = (uint32_t *)backbuffer.buf + (size_t)floorf(min_x_px) +
-										                         backbuffer.width_px * (size_t)floorf(min_y_px);
-										unsigned char *source_gray = (unsigned char *)glyph_buf;
+										size_t backbuffer_pitch = (size_t)backbuf.width_px * backbuf.pixel_size_byte;
+
+										// in memory: BB GG RR AA
+										uint8_t *dst_px_ptr = backbuf.buf +
+										                      (size_t)floorf(min_x_px) * backbuf.pixel_size_byte +
+										                      backbuffer_pitch * (size_t)floorf(min_y_px);
+										unsigned char *coverage_ptr = (unsigned char *)glyph_buf;
+
 										for (size_t y = 0; y < glyph_height_byte; ++y) {
 											for (size_t x = 0; x < glyph_width_byte; ++x) {
-												uint32_t alpha = (*source_gray * 255U) / 64U;
-												*target_pixel = alpha*0x00FF0000U << 16U | alpha*0x0000FF00U << 8U | 0x0U ;
+												uint8_t blend_factor = (*coverage_ptr * 255U) / 64U;
 
-												++target_pixel;
-												++source_gray;
+												// x/255 ~ x/256 + x/256² = (x + x/256) / 256
+
+												// blue
+												uint32_t blended =
+													0x00U * blend_factor + *dst_px_ptr * (255 - blend_factor);
+												*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+												// green
+												++dst_px_ptr;
+												blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
+												*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+												// red
+												++dst_px_ptr;
+												blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
+												*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+												// alpha
+												++dst_px_ptr;
+
+												++dst_px_ptr;
+												++coverage_ptr;
 											}
 
-											target_pixel += backbuffer.width_px - glyph_width_byte;
-											source_gray += glyph_pitch_byte - glyph_width_byte;
+											dst_px_ptr +=
+												backbuffer_pitch - (size_t)glyph_width_byte * backbuf.pixel_size_byte;
+											coverage_ptr += glyph_pitch_byte - glyph_width_byte;
 										}
 
 										// float red = 1.0F;
@@ -495,10 +521,10 @@ static unsigned long WINAPI render_run(void *param)
 				// =============================================================================
 				// Present
 				// =============================================================================
-				bitmap_info.bmiHeader.biWidth = (long)backbuffer.width_px;
-				bitmap_info.bmiHeader.biHeight = -(long)backbuffer.height_px;
-				SetDIBitsToDevice(dc_handle, 0, 0, backbuffer.width_px, backbuffer.height_px, 0, 0, 0,
-				                  backbuffer.height_px, backbuffer.buf, &bitmap_info, DIB_RGB_COLORS);
+				bitmap_info.bmiHeader.biWidth = (long)backbuf.width_px;
+				bitmap_info.bmiHeader.biHeight = -(long)backbuf.height_px;
+				SetDIBitsToDevice(dc_handle, 0, 0, backbuf.width_px, backbuf.height_px, 0, 0, 0, backbuf.height_px,
+				                  backbuf.buf, &bitmap_info, DIB_RGB_COLORS);
 			}
 		}
 	} else {
