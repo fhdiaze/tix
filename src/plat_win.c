@@ -44,6 +44,64 @@ typedef struct ReadFileResult {
 // TODO(fredy):  - remove this global
 static unsigned long g_render_thread_id = 0;
 
+static void bitmap_draw_border(Bitmap *bitmap, float min_x_px_f, float min_y_px_f, float width_px_f, float height_px_f,
+                               uint32_t color_argb)
+{
+	assert(width_px_f >= 0.0F);
+	assert(height_px_f >= 0.0F);
+	assert(min_x_px_f >= 0.0F);
+	assert(min_y_px_f >= 0.0F);
+	assert(min_x_px_f < (float)bitmap->width_px);
+	assert(min_y_px_f < (float)bitmap->height_px);
+	assert(min_x_px_f + width_px_f <= (float)bitmap->width_px);
+	assert(min_y_px_f + height_px_f <= (float)bitmap->height_px);
+
+	unsigned min_x_px = (unsigned)floorf(min_x_px_f);
+	unsigned min_y_px = (unsigned)floorf(min_y_px_f);
+	size_t width_px = (unsigned)ceilf(width_px_f);
+	size_t height_px = (unsigned)ceilf(height_px_f);
+
+	size_t backbuf_pitch_size_byte = (size_t)bitmap->width_px * bitmap->pixel_size_byte;
+
+	unsigned char *pixel_first_byte =
+		bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) + min_y_px * backbuf_pitch_size_byte;
+	unsigned char *last_pixel_first_byte = bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) +
+	                                       width_px * bitmap->pixel_size_byte + min_y_px * backbuf_pitch_size_byte;
+	uint32_t *pixel = nullptr;
+	unsigned x = 0;
+	unsigned y = 0;
+	size_t dx = 1;
+	size_t dy = 1;
+	while (pixel_first_byte <= last_pixel_first_byte) {
+		pixel = (uint32_t *)pixel_first_byte;
+		*pixel = color_argb;
+
+		if (y == 0 || y == height_px - 1) {
+			if (x < width_px - 1) {
+				pixel_first_byte += dx * bitmap->pixel_size_byte;
+			} else {
+				pixel_first_byte += backbuf_pitch_size_byte - width_px * bitmap->pixel_size_byte;
+			}
+		} else {
+			if (x == 0) {
+				pixel_first_byte += (width_px - 1) * bitmap->pixel_size_byte;
+			} else {
+				pixel_first_byte += backbuf_pitch_size_byte - width_px * bitmap->pixel_size_byte;
+			}
+		}
+
+		if ((x == 0 || x == width_px - 1) && y < height_px) {
+			pixel = (uint32_t *)pixel_first_byte;
+			*pixel = color_argb;
+			++y;
+		}
+
+		pixel_first_byte += dx * bitmap->pixel_size_byte;
+
+		pixel_first_byte += backbuf_pitch_size_byte - (width_px - min_x_px) * bitmap->pixel_size_byte;
+	}
+}
+
 /**
  * @brief max_x_px_f and max_y_px_f are not included
  *
@@ -80,8 +138,8 @@ static void bitmap_draw_rectangle(Bitmap *bitmap, float min_x_px_f, float min_y_
 
 	uint32_t pitch_size_byte = bitmap->width_px * bitmap->pixel_size_byte;
 
-	unsigned char *pixel_first_byte = (unsigned char *)bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) +
-	                                  (size_t)(min_y_px * pitch_size_byte);
+	unsigned char *pixel_first_byte =
+		bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) + (size_t)(min_y_px * pitch_size_byte);
 	uint32_t *pixel = nullptr;
 	for (unsigned y = min_y_px; y < max_y_px; ++y) {
 		for (unsigned x = min_x_px; x < max_x_px; ++x) {
@@ -243,11 +301,11 @@ static unsigned long WINAPI render_run(void *param)
 		HFONT font = CreateFontA(-128, 0, 0, 0, FW_NORMAL, 0, 0, 0, ANSI_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
 		                         ANTIALIASED_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
 		SelectObject(font_dc, font);
-		TEXTMETRICA tm;
-		GetTextMetricsA(font_dc, &tm);
+		TEXTMETRICA text_metrics;
+		GetTextMetricsA(font_dc, &text_metrics);
 
-		unsigned cell_width_px = (unsigned)abs(tm.tmMaxCharWidth);
-		unsigned cell_height_px = (unsigned)abs(tm.tmHeight);
+		unsigned cell_width_px = (unsigned)abs(text_metrics.tmAveCharWidth) + 10U;
+		unsigned cell_height_px = (unsigned)abs(text_metrics.tmHeight) + (unsigned)abs(text_metrics.tmExternalLeading);
 
 		while (tix.is_running) {
 			// =============================================================================
@@ -388,18 +446,15 @@ static unsigned long WINAPI render_run(void *param)
 				if (file.buf) {
 					size_t line_idx = 0;
 					size_t column_idx = 0;
-					char *line = file.buf;
 					char *file_end_plus_one = (char *)file.buf + file.size_byte;
 					size_t last_visible_line_idx_plus_one = tix.scroll_offset + visible_lines;
 
 					unsigned t = 0;
-					for (char *p = file.buf; p < file_end_plus_one && t < 10; ++p) {
+					for (char *p = file.buf; p < file_end_plus_one; ++p) {
 						if (line_idx >= tix.scroll_offset) {
 							if (line_idx < last_visible_line_idx_plus_one) {
-								if (*p == '\n') {
+								if (*p == '\n' || cell_width_px * column_idx >= backbuf.width_px) {
 									++line_idx;
-									line = p + 1;
-
 									column_idx = 0;
 								} else if (*p != '\r') {
 									// rotation, shear, scale: { WORD fract; short value; }
@@ -421,9 +476,13 @@ static unsigned long WINAPI render_run(void *param)
 										size_t relative_line_idx = line_idx - tix.scroll_offset;
 
 										float min_y_px = (float)cell_height_px * (float)relative_line_idx;
-										float max_y_px = min_y_px + (float)cell_height_px;
 										float min_x_px = (float)column_idx * (float)cell_width_px;
+
 										float max_x_px = min_x_px + (float)cell_width_px;
+										float max_y_px = min_y_px + (float)cell_height_px;
+
+										max_x_px = min(max_x_px, (float)backbuf.width_px);
+										max_y_px = min(max_y_px, (float)backbuf.height_px);
 
 										unsigned glyph_width_byte = glyph_metrics.gmBlackBoxX;
 										unsigned glyph_height_byte = glyph_metrics.gmBlackBoxY;
@@ -487,8 +546,8 @@ static unsigned long WINAPI render_run(void *param)
 										// 		green = BACKGROUND_COLOR_G / 255.0F;
 										// 		blue = BACKGROUND_COLOR_B / 255.0F;
 										// 	}
-										// 	bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px,
-										// 	                      red, green, blue);
+										bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px, red,
+										                      green, blue);
 										// }
 									}
 
