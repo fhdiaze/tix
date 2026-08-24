@@ -47,8 +47,8 @@ static unsigned long g_render_thread_id = 0;
 static void bitmap_draw_border(Bitmap *bitmap, float min_x_px_f, float min_y_px_f, float width_px_f, float height_px_f,
                                uint32_t color_argb)
 {
-	assert(width_px_f >= 0.0F);
-	assert(height_px_f >= 0.0F);
+	assert(width_px_f > 1.0F);
+	assert(height_px_f > 1.0F);
 	assert(min_x_px_f >= 0.0F);
 	assert(min_y_px_f >= 0.0F);
 	assert(min_x_px_f < (float)bitmap->width_px);
@@ -66,39 +66,47 @@ static void bitmap_draw_border(Bitmap *bitmap, float min_x_px_f, float min_y_px_
 	unsigned char *pixel_first_byte =
 		bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) + min_y_px * backbuf_pitch_size_byte;
 	unsigned char *last_pixel_first_byte = bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) +
-	                                       width_px * bitmap->pixel_size_byte + min_y_px * backbuf_pitch_size_byte;
+	                                       min_y_px * backbuf_pitch_size_byte + width_px * bitmap->pixel_size_byte +
+	                                       height_px * backbuf_pitch_size_byte;
+
+	// size_t pixel_first_byte = 0 + (size_t)(min_x_px * bitmap->pixel_size_byte) + min_y_px * backbuf_pitch_size_byte;
+	// size_t last_pixel_first_byte = 0 + (size_t)(min_x_px * bitmap->pixel_size_byte) +
+	//                                min_y_px * backbuf_pitch_size_byte + width_px * bitmap->pixel_size_byte +
+	//                                height_px * backbuf_pitch_size_byte;
+
 	uint32_t *pixel = nullptr;
 	unsigned x = 0;
 	unsigned y = 0;
-	size_t dx = 1;
-	size_t dy = 1;
 	while (pixel_first_byte <= last_pixel_first_byte) {
 		pixel = (uint32_t *)pixel_first_byte;
 		*pixel = color_argb;
 
-		if (y == 0 || y == height_px - 1) {
+		if (y == 0) {
 			if (x < width_px - 1) {
-				pixel_first_byte += dx * bitmap->pixel_size_byte;
+				pixel_first_byte += bitmap->pixel_size_byte;
+				++x;
 			} else {
-				pixel_first_byte += backbuf_pitch_size_byte - width_px * bitmap->pixel_size_byte;
+				pixel_first_byte += backbuf_pitch_size_byte - (width_px - 1) * bitmap->pixel_size_byte;
+				x = 0;
+				++y;
+			}
+		} else if (y == height_px - 1) {
+			if (x < width_px - 1) {
+				pixel_first_byte += bitmap->pixel_size_byte;
+				++x;
+			} else {
+				break;
 			}
 		} else {
 			if (x == 0) {
 				pixel_first_byte += (width_px - 1) * bitmap->pixel_size_byte;
+				x += width_px - 1;
 			} else {
-				pixel_first_byte += backbuf_pitch_size_byte - width_px * bitmap->pixel_size_byte;
+				pixel_first_byte += backbuf_pitch_size_byte - (width_px - 1) * bitmap->pixel_size_byte;
+				x = 0;
+				++y;
 			}
 		}
-
-		if ((x == 0 || x == width_px - 1) && y < height_px) {
-			pixel = (uint32_t *)pixel_first_byte;
-			*pixel = color_argb;
-			++y;
-		}
-
-		pixel_first_byte += dx * bitmap->pixel_size_byte;
-
-		pixel_first_byte += backbuf_pitch_size_byte - (width_px - min_x_px) * bitmap->pixel_size_byte;
 	}
 }
 
@@ -298,7 +306,7 @@ static unsigned long WINAPI render_run(void *param)
 		FILETIME file_previous_write_time = {};
 
 		HDC font_dc = CreateCompatibleDC(nullptr);
-		HFONT font = CreateFontA(-128, 0, 0, 0, FW_NORMAL, 0, 0, 0, ANSI_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+		HFONT font = CreateFontA(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, ANSI_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
 		                         ANTIALIASED_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
 		SelectObject(font_dc, font);
 		TEXTMETRICA text_metrics;
@@ -449,7 +457,6 @@ static unsigned long WINAPI render_run(void *param)
 					char *file_end_plus_one = (char *)file.buf + file.size_byte;
 					size_t last_visible_line_idx_plus_one = tix.scroll_offset + visible_lines;
 
-					unsigned t = 0;
 					for (char *p = file.buf; p < file_end_plus_one; ++p) {
 						if (line_idx >= tix.scroll_offset) {
 							if (line_idx < last_visible_line_idx_plus_one) {
@@ -472,83 +479,73 @@ static unsigned long WINAPI render_run(void *param)
 										                                   glyph_size_byte, glyph_buf, &identity);
 									}
 
-									if (glyph_size_byte != GDI_ERROR && glyph_size_byte) {
-										size_t relative_line_idx = line_idx - tix.scroll_offset;
+									size_t relative_line_idx = line_idx - tix.scroll_offset;
+									float min_x_px = (float)column_idx * (float)cell_width_px;
+									float min_y_px = (float)cell_height_px * (float)relative_line_idx;
 
-										float min_y_px = (float)cell_height_px * (float)relative_line_idx;
-										float min_x_px = (float)column_idx * (float)cell_width_px;
+									float max_x_px = min_x_px + (float)cell_width_px;
+									float max_y_px = min_y_px + (float)cell_height_px;
+									max_x_px = min(max_x_px, (float)backbuf.width_px);
+									max_y_px = min(max_y_px, (float)backbuf.height_px);
 
-										float max_x_px = min_x_px + (float)cell_width_px;
-										float max_y_px = min_y_px + (float)cell_height_px;
+									float width = min((float)cell_width_px, (float)backbuf.width_px - min_x_px);
+									float height = min((float)cell_height_px, (float)backbuf.height_px - min_y_px);
 
-										max_x_px = min(max_x_px, (float)backbuf.width_px);
-										max_y_px = min(max_y_px, (float)backbuf.height_px);
+									// TODO(fredy): what happen with width 1.5F?
+									if (width > 1.0F && height > 1.0F && glyph_size_byte != GDI_ERROR) {
+										if (glyph_size_byte) {
+											unsigned glyph_width_byte = glyph_metrics.gmBlackBoxX;
+											unsigned glyph_height_byte = glyph_metrics.gmBlackBoxY;
 
-										unsigned glyph_width_byte = glyph_metrics.gmBlackBoxX;
-										unsigned glyph_height_byte = glyph_metrics.gmBlackBoxY;
+											uint32_t row_padding_byte =
+												(sizeof(DWORD) - (size_t)glyph_width_byte % sizeof(DWORD)) %
+												sizeof(DWORD);
+											uint32_t glyph_pitch_byte = glyph_width_byte + row_padding_byte;
 
-										uint32_t row_padding_byte =
-											(sizeof(DWORD) - (size_t)glyph_width_byte % sizeof(DWORD)) % sizeof(DWORD);
-										uint32_t glyph_pitch_byte = glyph_width_byte + row_padding_byte;
+											size_t backbuffer_pitch =
+												(size_t)backbuf.width_px * backbuf.pixel_size_byte;
 
-										size_t backbuffer_pitch = (size_t)backbuf.width_px * backbuf.pixel_size_byte;
+											// in memory: BB GG RR AA
+											uint8_t *dst_px_ptr = backbuf.buf +
+											                      (size_t)floorf(min_x_px) * backbuf.pixel_size_byte +
+											                      backbuffer_pitch * (size_t)floorf(min_y_px);
+											unsigned char *coverage_ptr = (unsigned char *)glyph_buf;
 
-										// in memory: BB GG RR AA
-										uint8_t *dst_px_ptr = backbuf.buf +
-										                      (size_t)floorf(min_x_px) * backbuf.pixel_size_byte +
-										                      backbuffer_pitch * (size_t)floorf(min_y_px);
-										unsigned char *coverage_ptr = (unsigned char *)glyph_buf;
+											for (size_t y = 0; y < glyph_height_byte; ++y) {
+												for (size_t x = 0; x < glyph_width_byte; ++x) {
+													uint8_t blend_factor = (*coverage_ptr * 255U) / 64U;
 
-										for (size_t y = 0; y < glyph_height_byte; ++y) {
-											for (size_t x = 0; x < glyph_width_byte; ++x) {
-												uint8_t blend_factor = (*coverage_ptr * 255U) / 64U;
+													// x/255 ~ x/256 + x/256² = (x + x/256) / 256
 
-												// x/255 ~ x/256 + x/256² = (x + x/256) / 256
+													// blue
+													uint32_t blended =
+														0x00U * blend_factor + *dst_px_ptr * (255 - blend_factor);
+													*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
 
-												// blue
-												uint32_t blended =
-													0x00U * blend_factor + *dst_px_ptr * (255 - blend_factor);
-												*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+													// green
+													++dst_px_ptr;
+													blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
+													*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
 
-												// green
-												++dst_px_ptr;
-												blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
-												*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+													// red
+													++dst_px_ptr;
+													blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
+													*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
 
-												// red
-												++dst_px_ptr;
-												blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
-												*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+													// alpha
+													++dst_px_ptr;
 
-												// alpha
-												++dst_px_ptr;
+													++dst_px_ptr;
+													++coverage_ptr;
+												}
 
-												++dst_px_ptr;
-												++coverage_ptr;
+												dst_px_ptr += backbuffer_pitch -
+												              (size_t)glyph_width_byte * backbuf.pixel_size_byte;
+												coverage_ptr += glyph_pitch_byte - glyph_width_byte;
 											}
-
-											dst_px_ptr +=
-												backbuffer_pitch - (size_t)glyph_width_byte * backbuf.pixel_size_byte;
-											coverage_ptr += glyph_pitch_byte - glyph_width_byte;
 										}
 
-										// float red = 1.0F;
-										// float green = 1.0F;
-										// float blue = 1.0F;
-
-										// if (min_x_px < (float)backbuffer.width_px &&
-										//     min_y_px < (float)backbuffer.height_px) {
-										// 	max_x_px = min(max_x_px, (float)backbuffer.width_px);
-										// 	max_y_px = min(max_y_px, (float)backbuffer.height_px);
-
-										// 	if (line[column_idx] == ' ') {
-										// 		red = BACKGROUND_COLOR_R / 255.0F;
-										// 		green = BACKGROUND_COLOR_G / 255.0F;
-										// 		blue = BACKGROUND_COLOR_B / 255.0F;
-										// 	}
-										bitmap_draw_rectangle(&backbuffer, min_x_px, min_y_px, max_x_px, max_y_px, red,
-										                      green, blue);
-										// }
+										bitmap_draw_border(&backbuf, min_x_px, min_y_px, width, height, 0xFFFFFFU);
 									}
 
 									arena_reset(&trans_arena);
@@ -559,8 +556,6 @@ static unsigned long WINAPI render_run(void *param)
 								break;
 							}
 						}
-
-						++t;
 					}
 
 					tix.lines_count = line_idx;
