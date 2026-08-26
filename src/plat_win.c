@@ -395,7 +395,7 @@ static unsigned long WINAPI render_run(void *param)
 				// =============================================================================
 				// Update
 				// =============================================================================
-				unsigned visible_lines = (unsigned)floorf((float)backbuf.height_px / (float)cell_height_px);
+				unsigned viewport_lines_count = (unsigned)floorf((float)backbuf.height_px / (float)cell_height_px);
 
 				if (notches > 0) {
 					if (tix.scroll_offset > (unsigned)notches) {
@@ -405,14 +405,15 @@ static unsigned long WINAPI render_run(void *param)
 					}
 				} else if (notches < 0) {
 					tix.scroll_offset += (unsigned)-notches;
-					size_t max_scroll_offset = tix.lines_count > visible_lines ? tix.lines_count - visible_lines : 0;
+					size_t max_scroll_offset =
+						tix.lines_count > viewport_lines_count ? tix.lines_count - viewport_lines_count : 0;
 					if (tix.scroll_offset > max_scroll_offset) {
 						tix.scroll_offset = max_scroll_offset;
 					}
 				}
 
 				tix.scroll_offset = max(tix.scroll_offset, 0);
-				tix.scroll_offset = min(tix.scroll_offset, tix.lines_count - visible_lines);
+				tix.scroll_offset = min(tix.scroll_offset, tix.lines_count - viewport_lines_count);
 
 				FILETIME current_write_time = {};
 				if (!file.buf) {
@@ -453,104 +454,107 @@ static unsigned long WINAPI render_run(void *param)
 
 				if (file.buf) {
 					size_t line_idx = 0;
-					size_t column_idx = 0;
+					unsigned column_idx = 0;
 					char *file_end_plus_one = (char *)file.buf + file.size_byte;
-					size_t last_visible_line_idx_plus_one = tix.scroll_offset + visible_lines;
+					size_t last_visible_line_idx_plus_one = tix.scroll_offset + (size_t)viewport_lines_count;
 
 					for (char *p = file.buf; p < file_end_plus_one; ++p) {
 						if (line_idx >= tix.scroll_offset) {
 							if (line_idx < last_visible_line_idx_plus_one) {
-								if (*p == '\n' || cell_width_px * column_idx >= backbuf.width_px) {
+								if (*p == '\n') {
 									++line_idx;
 									column_idx = 0;
 								} else if (*p != '\r') {
-									// rotation, shear, scale: { WORD fract; short value; }
-									static const MAT2 identity = { { 0, 1 }, { 0, 0 }, { 0, 0 }, { 0, 1 } };
+									unsigned viewport_line_idx = (unsigned)(line_idx - tix.scroll_offset);
+									unsigned min_x_px = column_idx * cell_width_px;
+									unsigned min_y_px = cell_height_px * viewport_line_idx;
 
-									void *glyph_buf = nullptr;
-									GLYPHMETRICS glyph_metrics;
-									DWORD glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)*p, GGO_GRAY8_BITMAP,
-									                                         &glyph_metrics, 0, nullptr, &identity);
-									if (glyph_size_byte != GDI_ERROR && glyph_size_byte &&
-									    trans_arena.offset_byte + glyph_size_byte <= trans_arena.buf_size_byte) {
-										glyph_buf = arena_push_zero(&trans_arena, glyph_size_byte);
-										glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)(unsigned char)*p,
-										                                   GGO_GRAY8_BITMAP, &glyph_metrics,
-										                                   glyph_size_byte, glyph_buf, &identity);
-									}
+									if (min_x_px + 1 < backbuf.width_px) {
+										unsigned blit_width_px = min(cell_width_px, backbuf.width_px - min_x_px);
+										unsigned blit_height_px = min(cell_height_px, backbuf.height_px - min_y_px);
 
-									size_t relative_line_idx = line_idx - tix.scroll_offset;
-									float min_x_px = (float)column_idx * (float)cell_width_px;
-									float min_y_px = (float)cell_height_px * (float)relative_line_idx;
+										// rotation, shear, scale: { WORD fract; short value; }
+										static const MAT2 identity = { { 0, 1 }, { 0, 0 }, { 0, 0 }, { 0, 1 } };
 
-									float max_x_px = min_x_px + (float)cell_width_px;
-									float max_y_px = min_y_px + (float)cell_height_px;
-									max_x_px = min(max_x_px, (float)backbuf.width_px);
-									max_y_px = min(max_y_px, (float)backbuf.height_px);
-
-									float width = min((float)cell_width_px, (float)backbuf.width_px - min_x_px);
-									float height = min((float)cell_height_px, (float)backbuf.height_px - min_y_px);
-
-									// TODO(fredy): what happen with width 1.5F?
-									if (width > 1.0F && height > 1.0F && glyph_size_byte != GDI_ERROR) {
-										if (glyph_size_byte) {
-											unsigned glyph_width_byte = glyph_metrics.gmBlackBoxX;
-											unsigned glyph_height_byte = glyph_metrics.gmBlackBoxY;
-
-											uint32_t row_padding_byte =
-												(sizeof(DWORD) - (size_t)glyph_width_byte % sizeof(DWORD)) %
-												sizeof(DWORD);
-											uint32_t glyph_pitch_byte = glyph_width_byte + row_padding_byte;
-
-											size_t backbuffer_pitch =
-												(size_t)backbuf.width_px * backbuf.pixel_size_byte;
-
-											// in memory: BB GG RR AA
-											uint8_t *dst_px_ptr = backbuf.buf +
-											                      (size_t)floorf(min_x_px) * backbuf.pixel_size_byte +
-											                      backbuffer_pitch * (size_t)floorf(min_y_px);
-											unsigned char *coverage_ptr = (unsigned char *)glyph_buf;
-
-											for (size_t y = 0; y < glyph_height_byte; ++y) {
-												for (size_t x = 0; x < glyph_width_byte; ++x) {
-													uint8_t blend_factor = (*coverage_ptr * 255U) / 64U;
-
-													// x/255 ~ x/256 + x/256² = (x + x/256) / 256
-
-													// blue
-													uint32_t blended =
-														0x00U * blend_factor + *dst_px_ptr * (255 - blend_factor);
-													*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
-
-													// green
-													++dst_px_ptr;
-													blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
-													*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
-
-													// red
-													++dst_px_ptr;
-													blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
-													*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
-
-													// alpha
-													++dst_px_ptr;
-
-													++dst_px_ptr;
-													++coverage_ptr;
-												}
-
-												dst_px_ptr += backbuffer_pitch -
-												              (size_t)glyph_width_byte * backbuf.pixel_size_byte;
-												coverage_ptr += glyph_pitch_byte - glyph_width_byte;
-											}
+										void *glyph_buf = nullptr;
+										GLYPHMETRICS glyph_metrics;
+										DWORD glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)*p, GGO_GRAY8_BITMAP,
+										                                         &glyph_metrics, 0, nullptr, &identity);
+										if (glyph_size_byte != GDI_ERROR && glyph_size_byte &&
+										    trans_arena.offset_byte + glyph_size_byte <= trans_arena.buf_size_byte) {
+											glyph_buf = arena_push_zero(&trans_arena, glyph_size_byte);
+											glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)(unsigned char)*p,
+											                                   GGO_GRAY8_BITMAP, &glyph_metrics,
+											                                   glyph_size_byte, glyph_buf, &identity);
 										}
 
-										bitmap_draw_border(&backbuf, min_x_px, min_y_px, width, height, 0xFFFFFFU);
+										// TODO(fredy): what happen with width 1.5F?
+										if (glyph_size_byte != GDI_ERROR) {
+											if (glyph_size_byte) {
+												unsigned glyph_width_byte = glyph_metrics.gmBlackBoxX;
+												unsigned glyph_height_byte = glyph_metrics.gmBlackBoxY;
+
+												blit_width_px = min(blit_width_px, glyph_width_byte);
+												blit_height_px = min(blit_height_px, glyph_height_byte);
+
+												uint32_t row_padding_byte =
+													(sizeof(DWORD) - (size_t)glyph_width_byte % sizeof(DWORD)) %
+													sizeof(DWORD);
+												uint32_t glyph_pitch_byte = glyph_width_byte + row_padding_byte;
+
+												size_t backbuffer_pitch =
+													(size_t)backbuf.width_px * backbuf.pixel_size_byte;
+
+												// in memory: BB GG RR AA
+												uint8_t *dst_px_ptr = backbuf.buf +
+												                      (size_t)(min_x_px * backbuf.pixel_size_byte) +
+												                      backbuffer_pitch * min_y_px;
+												unsigned char *coverage_ptr = (unsigned char *)glyph_buf;
+
+												for (size_t y = 0; y < blit_height_px; ++y) {
+													for (size_t x = 0; x < blit_width_px; ++x) {
+														uint8_t blend_factor = (*coverage_ptr * 255U) / 64U;
+
+														// x/255 ~ x/256 + x/256² = (x + x/256) / 256
+
+														// blue
+														uint32_t blended =
+															0x00U * blend_factor + *dst_px_ptr * (255 - blend_factor);
+														*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+														// green
+														++dst_px_ptr;
+														blended =
+															0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
+														*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+														// red
+														++dst_px_ptr;
+														blended =
+															0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
+														*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+														// alpha
+														++dst_px_ptr;
+
+														++dst_px_ptr;
+														++coverage_ptr;
+													}
+
+													dst_px_ptr += backbuffer_pitch -
+													              (size_t)blit_width_px * backbuf.pixel_size_byte;
+													coverage_ptr += glyph_pitch_byte - blit_width_px;
+												}
+											}
+
+											// bitmap_draw_border(&backbuf, (float)min_x_px, (float)min_y_px,
+											//                    (float)blit_width_px, (float)blit_height_px, 0xFFFFFFU);
+										}
+
+										arena_reset(&trans_arena);
+
+										++column_idx;
 									}
-
-									arena_reset(&trans_arena);
-
-									++column_idx;
 								}
 							} else {
 								break;
