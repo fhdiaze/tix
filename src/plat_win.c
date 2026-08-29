@@ -1,4 +1,5 @@
 #include <dwmapi.h>
+#include <immintrin.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,7 +28,7 @@
  * The byte order in a register (little endian) is AA RR GG BB
  */
 typedef struct Bitmap {
-	unsigned char *buf;
+	void *buf;
 	size_t buf_size_byte;
 
 	unsigned width_px;
@@ -63,9 +64,9 @@ static void bitmap_draw_border(Bitmap *bitmap, float min_x_px_f, float min_y_px_
 
 	size_t backbuf_pitch_size_byte = (size_t)bitmap->width_px * bitmap->pixel_size_byte;
 
-	unsigned char *pixel_first_byte =
-		bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) + min_y_px * backbuf_pitch_size_byte;
-	unsigned char *last_pixel_first_byte = bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) +
+	unsigned char *pixel_first_byte = (unsigned char *)bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) +
+	                                  min_y_px * backbuf_pitch_size_byte;
+	unsigned char *last_pixel_first_byte = (unsigned char *)bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) +
 	                                       min_y_px * backbuf_pitch_size_byte + width_px * bitmap->pixel_size_byte +
 	                                       height_px * backbuf_pitch_size_byte;
 
@@ -146,8 +147,8 @@ static void bitmap_draw_rectangle(Bitmap *bitmap, float min_x_px_f, float min_y_
 
 	uint32_t pitch_size_byte = bitmap->width_px * bitmap->pixel_size_byte;
 
-	unsigned char *pixel_first_byte =
-		bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) + (size_t)(min_y_px * pitch_size_byte);
+	unsigned char *pixel_first_byte = (unsigned char *)bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) +
+	                                  (size_t)(min_y_px * pitch_size_byte);
 	uint32_t *pixel = nullptr;
 	for (unsigned y = min_y_px; y < max_y_px; ++y) {
 		for (unsigned x = min_x_px; x < max_x_px; ++x) {
@@ -440,10 +441,41 @@ static unsigned long WINAPI render_run(void *param)
 				// =============================================================================
 				// Segmentation
 				// =============================================================================
+				Line lines[20];
+				if (file.buf) {
+					size_t line_idx = 0;
+					unsigned char *current_position = (unsigned char *)file.buf;
+					unsigned char *file_end_plus_one = (unsigned char *)file.buf + file.size_byte;
+
+					__m256i newline = _mm256_set1_epi8('\n');
+					// __m256i complex = _mm256_set1_epi8((char)0x80);
+
+					__m256i batch = _mm256_loadu_si256((__m256i *)current_position);
+
+					__m256i test_newline = _mm256_cmpeq_epi8(batch, newline);
+					// __m256i test_complex = _mm256_and_si256(batch, complex);
+
+					uint32_t newline_detected = (uint32_t)_mm256_movemask_epi8(test_newline);
+
+					if (newline_detected) {
+						uint32_t first_newline_idx = 0;
+						uint_ctz(newline_detected, &first_newline_idx);
+						size_t start_idx = (size_t)((unsigned char *)file.buf - current_position);
+						lines[line_idx] = (Line){
+							.contains_complex_chars = 0U,
+							.start_idx = start_idx,
+							.newline_idx = start_idx + first_newline_idx,
+						};
+
+						++line_idx;
+					}
+				}
 
 				// =============================================================================
 				// Shaping
 				// =============================================================================
+
+				// Sometimes multiple codepoints are merged into one glyph
 
 				// =============================================================================
 				// Layout
@@ -455,10 +487,10 @@ static unsigned long WINAPI render_run(void *param)
 				if (file.buf) {
 					size_t line_idx = 0;
 					unsigned column_idx = 0;
-					char *file_end_plus_one = (char *)file.buf + file.size_byte;
+					unsigned char *file_end_plus_one = (unsigned char *)file.buf + file.size_byte;
 					size_t last_visible_line_idx_plus_one = tix.scroll_offset + (size_t)viewport_lines_count;
 
-					for (char *p = file.buf; p < file_end_plus_one; ++p) {
+					for (unsigned char *p = file.buf; p < file_end_plus_one; ++p) {
 						if (line_idx >= tix.scroll_offset) {
 							if (line_idx < last_visible_line_idx_plus_one) {
 								if (*p == '\n') {
@@ -476,16 +508,16 @@ static unsigned long WINAPI render_run(void *param)
 										// rotation, shear, scale: { WORD fract; short value; }
 										static const MAT2 identity = { { 0, 1 }, { 0, 0 }, { 0, 0 }, { 0, 1 } };
 
-										void *glyph_buf = nullptr;
+										unsigned char *glyph_buf = nullptr;
 										GLYPHMETRICS glyph_metrics;
 										DWORD glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)*p, GGO_GRAY8_BITMAP,
 										                                         &glyph_metrics, 0, nullptr, &identity);
 										if (glyph_size_byte != GDI_ERROR && glyph_size_byte &&
 										    trans_arena.offset_byte + glyph_size_byte <= trans_arena.buf_size_byte) {
 											glyph_buf = arena_push_zero(&trans_arena, glyph_size_byte);
-											glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)(unsigned char)*p,
-											                                   GGO_GRAY8_BITMAP, &glyph_metrics,
-											                                   glyph_size_byte, glyph_buf, &identity);
+											glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)*p, GGO_GRAY8_BITMAP,
+											                                   &glyph_metrics, glyph_size_byte,
+											                                   glyph_buf, &identity);
 										}
 
 										// TODO(fredy): what happen with width 1.5F?
@@ -506,10 +538,10 @@ static unsigned long WINAPI render_run(void *param)
 													(size_t)backbuf.width_px * backbuf.pixel_size_byte;
 
 												// in memory: BB GG RR AA
-												uint8_t *dst_px_ptr = backbuf.buf +
+												uint8_t *dst_px_ptr = (unsigned char *)backbuf.buf +
 												                      (size_t)(min_x_px * backbuf.pixel_size_byte) +
 												                      backbuffer_pitch * min_y_px;
-												unsigned char *coverage_ptr = (unsigned char *)glyph_buf;
+												unsigned char *coverage_ptr = glyph_buf;
 
 												for (size_t y = 0; y < blit_height_px; ++y) {
 													for (size_t x = 0; x < blit_width_px; ++x) {

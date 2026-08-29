@@ -25,7 +25,7 @@ set "DebugFlags=-g -gcodeview -O0 -DDEBUG -Wl,/DEBUG:FULL -fms-runtime-lib=stati
 set "ReleaseFlags=-O3 -DNDEBUG -flto -Wl,/opt:ref -Wl,/opt:icf -fms-runtime-lib=static"
 set "Flags="
 set "AppFlags=-shared -Wl,/MAP:%Outdir%/%OutAppFileName%.map,/MAPINFO:EXPORTS -Wl,/PDB:%Outdir%/%OutAppFileName%_%random%.pdb"
-set "PlatFlags=-luser32 -lgdi32 -lwinmm -ldwmapi -Wl,/subsystem:windows -Wl,/MAP:%Outdir%/%OutPlatFileName%.map,/MAPINFO:EXPORTS"
+set "PlatFlags=-mavx2 -luser32 -lgdi32 -lwinmm -ldwmapi -Wl,/subsystem:windows -Wl,/MAP:%Outdir%/%OutPlatFileName%.map,/MAPINFO:EXPORTS"
 
 :parse_args
 
@@ -59,6 +59,34 @@ if /i not "%Architecture%"=="x86" if /i not "%Architecture%"=="x64" (
     echo Error: Invalid architecture "%Architecture%". Must be "x86" or "x64".
     exit /b 1
 )
+
+echo.
+REM VCToolsInstallDir is unique to the MSVC dev environment, unlike LIB which other tools (e.g. curl) may already set
+if not defined VCToolsInstallDir (
+    set "VsWhere=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+    if not exist "!VsWhere!" (
+        echo Error: vswhere.exe not found. Install Visual Studio Build Tools, or run this script from a Developer Command Prompt.
+        exit /b 1
+    )
+
+    set "VsInstallPath="
+    for /f "usebackq tokens=*" %%i in (`"!VsWhere!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do (
+        set "VsInstallPath=%%i"
+    )
+
+    if not defined VsInstallPath (
+        echo Error: no Visual Studio installation with the C++ build tools component was found.
+        exit /b 1
+    )
+
+    echo Setting up the MSVC build environment for %Architecture%...
+    call "!VsInstallPath!\VC\Auxiliary\Build\vcvarsall.bat" %Architecture%
+    if errorlevel 1 (
+        echo Error: vcvarsall.bat failed to initialize the build environment.
+        exit /b 1
+    )
+)
+echo.
 
 if not exist "%Outdir%" (
     echo Creating %Outdir%...
@@ -116,12 +144,13 @@ echo Waiting for pdb file>"%Outdir%\lock.tmp"
 echo.
 
 clang !AppFlags! %AppFilePath% -o %OutAppFilePath%
+set "AppBuildErrorLevel=%errorlevel%"
 
 del /q "%Outdir%\lock.tmp" 2>nul
 
-if errorlevel 1 (
+if %AppBuildErrorLevel% neq 0 (
     echo Building %OutAppFilePath% failed!
-    exit /b %errorlevel%
+    exit /b %AppBuildErrorLevel%
 )
 
 echo.

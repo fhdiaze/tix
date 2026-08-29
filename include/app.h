@@ -37,10 +37,10 @@ typedef struct TixInput {
 
 typedef struct Storage {
 	size_t perm_size_byte;
-	unsigned char *perm_base_address;
+	void *perm_base_address;
 
 	size_t trans_size_byte;
-	unsigned char *trans_base_address;
+	void *trans_base_address;
 } Storage;
 
 typedef enum ContextMode : uint8_t {
@@ -71,6 +71,18 @@ typedef struct Grid {
 	uint32_t width;
 	uint32_t height;
 } Grid;
+
+typedef struct Line {
+	size_t start_idx;
+	size_t newline_idx;
+	uint8_t contains_complex_chars;
+} Line;
+
+typedef struct Run {
+	size_t starts_at_byte;
+	size_t ends_at_plus_one_byte;
+	uint8_t contains_complex_chars;
+} Run;
 
 typedef struct Tix {
 	size_t scroll_offset;

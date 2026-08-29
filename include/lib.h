@@ -11,6 +11,70 @@
 #include <time.h>
 
 // =============================================================================
+// Compiler detection
+// =============================================================================
+
+#ifndef LIB_COMPILER_MSVC
+#define LIB_COMPILER_MSVC 0
+#endif
+
+#ifndef LIB_COMPILER_LLVM
+#define LIB_COMPILER_LLVM 0
+#endif
+
+#if !LIB_COMPILER_MSVC && !LIB_COMPILER_LLVM
+#ifdef _MSC_VER
+#undef LIB_COMPILER_MSVC
+#define LIB_COMPILER_MSVC 1
+#else
+#undef LIB_COMPILER_LLVM
+#define LIB_COMPILER_LLVM 1
+#endif
+#endif
+
+#if LIB_COMPILER_MSVC
+#include <intrin.h>
+#endif
+
+// =============================================================================
+// Bit operations
+// =============================================================================
+
+/**
+ * @brief Count trailing zeroes - returns the index of the first least-significant non-zero bit if there is one.
+ *
+ * @param value The value to be checked
+ * @param[out] count Set to the number of trailing zeroes when a non-zero bit is found; left untouched otherwise.
+ * @return 1 if a non-zero bit was found, otherwise 0
+ */
+uint32_t uint_ctz(uint32_t value, uint32_t *count)
+{
+	uint32_t was_found = 0U;
+
+#if LIB_COMPILER_MSVC
+	unsigned long ctz_tmp = 0;
+	was_found = _BitScanForward(&ctz_tmp, value);
+	*count = (uint32_t)ctz_tmp;
+#elif LIB_COMPILER_LLVM
+	if (value != 0U) {
+		was_found = 1U;
+		*count = (uint32_t)__builtin_ctz(value);
+	}
+#else
+	for (unsigned test = 0; test < 32; ++test) {
+		if (value & (1U << test)) {
+			was_found = 1U;
+			*count = test;
+
+			break;
+		}
+	}
+#endif
+
+	return was_found;
+}
+
+// =============================================================================
 // Math
 // =============================================================================
 
