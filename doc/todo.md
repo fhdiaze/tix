@@ -85,7 +85,7 @@ spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 ## Loose ends / cleanup (not stage-gated)
 
 - [ ] `render_process_messages`: bound the `PeekMessage` loop
-      (`TODO(fredy)` in `plat_win.c`).
+      (`TODO(fredy)` in `sys_win.c`).
 - [ ] `WM_SIZE` is posted to the render thread from both `window_procedure`
       and the `WinMain` message loop — de-duplicate.
 - [ ] Review the `scroll_offset` clamp in the `WM_MOUSEWHEEL` handler; the

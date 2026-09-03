@@ -10,14 +10,14 @@ set "BuildMode=debug"
 set "Architecture=x64"
 set "LiveBuild=0"
 set "AppFileName=app"
-set "PlatFileName=plat_win"
-set "PlatFilePath=./src/%PlatFileName%.c"
+set "SysFileName=sys_win"
+set "SysFilePath=./src/%SysFileName%.c"
 set "AppFilePath=./src/%AppFileName%.c"
 set "Outdir=./bin"
 set "Datadir=./data"
 set "OutAppFileName=tix_app"
-set "OutPlatFileName=tix_win"
-set "OutPlatFilePath=%Outdir%/%OutPlatFileName%.exe"
+set "OutSysFileName=tix_win"
+set "OutSysFilePath=%Outdir%/%OutSysFileName%.exe"
 set "OutAppFilePath=%Outdir%/%OutAppFileName%.dll"
 set "FlagsFile=%ScriptDir%../compile_flags.txt"
 set "DebugFlags=-g -gcodeview -O0 -DDEBUG -Wl,/DEBUG:FULL -fms-runtime-lib=static_dbg"
@@ -25,7 +25,7 @@ set "DebugFlags=-g -gcodeview -O0 -DDEBUG -Wl,/DEBUG:FULL -fms-runtime-lib=stati
 set "ReleaseFlags=-O3 -DNDEBUG -flto -Wl,/opt:ref -Wl,/opt:icf -fms-runtime-lib=static"
 set "Flags="
 set "AppFlags=-shared -Wl,/MAP:%Outdir%/%OutAppFileName%.map,/MAPINFO:EXPORTS -Wl,/PDB:%Outdir%/%OutAppFileName%_%random%.pdb"
-set "PlatFlags=-mavx2 -luser32 -lgdi32 -lwinmm -ldwmapi -Wl,/subsystem:windows -Wl,/MAP:%Outdir%/%OutPlatFileName%.map,/MAPINFO:EXPORTS"
+set "SysFlags=-mavx2 -luser32 -lgdi32 -lwinmm -ldwmapi -Wl,/subsystem:windows -Wl,/MAP:%Outdir%/%OutSysFileName%.map,/MAPINFO:EXPORTS"
 
 :parse_args
 
@@ -161,23 +161,23 @@ echo ===========================================================================
 echo.
 
 if %LiveBuild% equ 1 (
-    echo Live build completed. Skipping platform build.
+    echo Live build completed. Skipping system build.
     exit /b 0
 )
 
-set "PlatFlags=!PlatFlags! !Flags!"
+set "SysFlags=!SysFlags! !Flags!"
 
-echo Building %OutPlatFilePath% ...
+echo Building %OutSysFilePath% ...
 echo.
-echo clang !PlatFlags! %PlatFilePath% -o %OutPlatFilePath%
+echo clang !SysFlags! %SysFilePath% -o %OutSysFilePath%
 echo.
 
-clang !PlatFlags! %PlatFilePath% -o %OutPlatFilePath%
+clang !SysFlags! %SysFilePath% -o %OutSysFilePath%
 
 if errorlevel 1 (
-    echo Building %OutPlatFilePath% failed!
+    echo Building %OutSysFilePath% failed!
     exit /b %errorlevel%
 )
 
 echo.
-echo Building %OutPlatFilePath% succeeded!
+echo Building %OutSysFilePath% succeeded!

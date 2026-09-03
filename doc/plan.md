@@ -49,7 +49,7 @@ glyphs yet.
 
 This is also where the current throwaway first test gets dropped: `TextOutA`
 (GDI *text drawing* — GDI rasterizes the font and draws glyphs straight into
-the window's DC, which is what `window_render_lines` in `plat_win.c` does
+the window's DC, which is what `window_render_lines` in `sys_win.c` does
 now). The whole architecture exists to replace it — from Stage 2 on, glyphs
 are rasterized once into a DirectWrite coverage atlas and blended by hand, and
 GDI never touches text again.

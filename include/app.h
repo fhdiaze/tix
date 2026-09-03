@@ -5,6 +5,8 @@
 
 #include <stdint.h>
 
+#include "lib.h"
+
 #if DEBUG
 #define MEMORY_BASE_ADDRESS ((void *)TB_TO_BYTE(2ULL))
 #else
@@ -34,14 +36,6 @@ typedef struct TixInput {
 		};
 	};
 } TixInput;
-
-typedef struct Storage {
-	size_t perm_size_byte;
-	void *perm_base_address;
-
-	size_t trans_size_byte;
-	void *trans_base_address;
-} Storage;
 
 typedef enum ContextMode : uint8_t {
 	CONTEXT_MODE_FOLDER = 0,
@@ -85,6 +79,8 @@ typedef struct Run {
 } Run;
 
 typedef struct Tix {
+	Arena arena;
+
 	size_t scroll_offset;
 	size_t lines_count;
 
@@ -92,16 +88,15 @@ typedef struct Tix {
 	size_t caret_column;
 
 	Grid grid;
-	Storage storage;
 
 	ContextMode context_mode;
 	CursorMode cursor_mode;
 
-	uint8_t is_running;
 
 	char context_path[MAX_FILE_PATH];
 } Tix;
 
-void tix_init(Tix *tix);
+void app_init(Tix *tix);
+void app_update_and_render(Tix *tix);
 
 #endif // APP_H

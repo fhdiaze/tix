@@ -7,6 +7,7 @@
 
 #include "app.h"
 #include "lib.h"
+#include "sys.h"
 
 #undef LOG_LEVEL
 #define LOG_LEVEL LOG_LEVEL_ALL
@@ -37,10 +38,19 @@ typedef struct Bitmap {
 	uint8_t pixel_size_byte;
 } Bitmap;
 
-typedef struct ReadFileResult {
-	size_t size_byte;
-	void *buf;
-} ReadFileResult;
+typedef struct Storage {
+	size_t perm_size_byte;
+	void *perm_base_address;
+
+	size_t trans_size_byte;
+	void *trans_base_address;
+} Storage;
+
+typedef struct WinState {
+	Storage storage;
+
+	uint8_t is_running;
+} WinState;
 
 // TODO(fredy):  - remove this global
 static unsigned long g_render_thread_id = 0;
@@ -213,18 +223,18 @@ static inline uint32_t file_get_last_write_time(const char *const file_path, FIL
 	return 1U;
 }
 
-static uint32_t file_free_memory(void *base_address)
+static uint32_t file_free_memory(void *buf)
 {
 	uint32_t result = 0U;
 
-	if (base_address) {
-		result = (uint32_t)VirtualFree(base_address, 0, MEM_RELEASE);
+	if (buf) {
+		result = (uint32_t)VirtualFree(buf, 0, MEM_RELEASE);
 	}
 
 	return result;
 }
 
-static ReadFileResult file_read(const char *const path)
+static ReadFileResult sys_file_read(const char *const path)
 {
 	ReadFileResult result = {};
 
@@ -234,6 +244,8 @@ static ReadFileResult file_read(const char *const path)
 		LARGE_INTEGER filesize_struct;
 		if (GetFileSizeEx(handle, &filesize_struct)) {
 			uint32_t file_size_byte = (uint32_t)(filesize_struct.QuadPart);
+
+			// TODO(fredy): if the file is too big, use file mapping?
 			result.buf = VirtualAlloc(nullptr, file_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 			if (result.buf) {
 				DWORD read_size_byte = 0;
@@ -269,11 +281,9 @@ static unsigned long WINAPI render_run(void *param)
 
 	HDC dc_handle = GetDC(window);
 	if (dc_handle) {
-		Tix tix = {
+		WinState win_state = {
 			.is_running = 1U,
-			.context_path = "",
-			.lines_count = 20,
-			.storage = { .perm_size_byte = MB_TO_BYTE(64ULL), .trans_size_byte = GB_TO_BYTE(1ULL), },
+			.storage = { .perm_size_byte = MB_TO_BYTE(128ULL), .trans_size_byte = GB_TO_BYTE(4ULL), },
 		};
 
 		Bitmap backbuf = {
@@ -286,20 +296,23 @@ static unsigned long WINAPI render_run(void *param)
 									   .biCompression = BI_RGB,
 								   } };
 
+		assert(IS_POWER_OF_TWO(win_state.storage.perm_size_byte));
+		assert(IS_POWER_OF_TWO(win_state.storage.trans_size_byte));
+
 		// NOLINTNEXTLINE(performance-no-int-to-ptr): fixed base address for deterministic pointers across runs
-		tix.storage.perm_base_address = VirtualAlloc(MEMORY_BASE_ADDRESS,
-		                                             tix.storage.perm_size_byte + tix.storage.trans_size_byte,
+		win_state.storage.perm_base_address = VirtualAlloc(MEMORY_BASE_ADDRESS,
+		                                             win_state.storage.perm_size_byte + win_state.storage.trans_size_byte,
 		                                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-		if (tix.storage.perm_base_address) {
-			tix.storage.trans_base_address =
-				(unsigned char *)tix.storage.perm_base_address + tix.storage.perm_size_byte;
+		if (win_state.storage.perm_base_address) {
+			win_state.storage.trans_base_address =
+				(unsigned char *)win_state.storage.perm_base_address + win_state.storage.perm_size_byte;
 		}
 
 		Arena perm_arena = {};
-		arena_init(&perm_arena, tix.storage.perm_size_byte, tix.storage.perm_base_address);
+		arena_init(&perm_arena, win_state.storage.perm_size_byte, win_state.storage.perm_base_address);
 
 		Arena trans_arena = {};
-		arena_init(&trans_arena, tix.storage.trans_size_byte, tix.storage.trans_base_address);
+		arena_init(&trans_arena, win_state.storage.trans_size_byte, win_state.storage.trans_base_address);
 
 		assert(trans_arena.buf);
 
@@ -327,7 +340,7 @@ static unsigned long WINAPI render_run(void *param)
 		unsigned cell_width_px = (unsigned)abs(text_metrics.tmAveCharWidth) + 10U;
 		unsigned cell_height_px = (unsigned)abs(text_metrics.tmHeight) + (unsigned)abs(text_metrics.tmExternalLeading);
 
-		while (tix.is_running) {
+		while (win_state.is_running) {
 			// =============================================================================
 			// Input
 			// =============================================================================
@@ -342,7 +355,7 @@ static unsigned long WINAPI render_run(void *param)
 				case WM_QUIT: {
 					// The WM_QUIT message is not associated with a window and therefore will never be received through a
 					// window's window procedure. It is retrieved only by the GetMessage or PeekMessage functions
-					tix.is_running = 0U;
+					win_state.is_running = 0U;
 				} break;
 				case WM_MOUSEWHEEL: {
 					int delta = GET_WHEEL_DELTA_WPARAM(msg.wParam);
@@ -410,7 +423,7 @@ static unsigned long WINAPI render_run(void *param)
 				uint32_t was_file_updated = 0U;
 				FILETIME current_write_time = {};
 				if (!file.buf) {
-					file = file_read(file_path);
+					file = sys_file_read(file_path);
 					if (file.buf) {
 						file_get_last_write_time(file_path, &file_previous_write_time);
 						was_file_updated = 1U;
@@ -421,7 +434,7 @@ static unsigned long WINAPI render_run(void *param)
 					if (CompareFileTime(&current_write_time, &file_previous_write_time) > 0) {
 						file_free_memory(file.buf);
 
-						file = file_read(file_path);
+						file = sys_file_read(file_path);
 
 						if (file.buf) {
 							was_file_updated = 1U;
@@ -501,16 +514,16 @@ static unsigned long WINAPI render_run(void *param)
 				}
 
 				size_t visible_lines_count = (size_t)floorf((float)backbuf.height_px / (float)cell_height_px);
-				int64_t lines_per_notch = 3;
+				ptrdiff_t lines_per_notch = 3;
 
-				int64_t new_scroll_offset = (int64_t)tix.scroll_offset;
+				ptrdiff_t new_scroll_offset = (ptrdiff_t)win_state.scroll_offset;
 				new_scroll_offset -= lines_per_notch * notches;
-				new_scroll_offset = min(new_scroll_offset, (int64_t)lines_count - 1);
+				new_scroll_offset = min(new_scroll_offset, (ptrdiff_t)lines_count - 1);
 				new_scroll_offset = max(new_scroll_offset, 0);
 
 				assert(new_scroll_offset >= 0);
 
-				tix.scroll_offset = (size_t)new_scroll_offset;
+				win_state.scroll_offset = (size_t)new_scroll_offset;
 
 				// =============================================================================
 				// Segmentation
@@ -523,8 +536,8 @@ static unsigned long WINAPI render_run(void *param)
 				                      BACKGROUND_COLOR_R / 255.0F, BACKGROUND_COLOR_G / 255.0F,
 				                      BACKGROUND_COLOR_B / 255.0F);
 
-				size_t last_line_idx = min(tix.scroll_offset + visible_lines_count, lines_count);
-				for (size_t line_idx = tix.scroll_offset; line_idx < last_line_idx; ++line_idx) {
+				size_t last_line_idx = min(win_state.scroll_offset + visible_lines_count, lines_count);
+				for (size_t line_idx = win_state.scroll_offset; line_idx < last_line_idx; ++line_idx) {
 					// =============================================================================
 					// Shaping
 					// =============================================================================
@@ -532,7 +545,7 @@ static unsigned long WINAPI render_run(void *param)
 					// Sometimes multiple codepoints are merged into one glyph
 
 					unsigned column_idx = 0;
-					unsigned visible_line_idx = (unsigned)(line_idx - tix.scroll_offset);
+					unsigned visible_line_idx = (unsigned)(line_idx - win_state.scroll_offset);
 					unsigned min_y_px = cell_height_px * visible_line_idx;
 
 					char *p = (char *)file.buf + lines[line_idx].start_idx;
