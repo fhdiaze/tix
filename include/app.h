@@ -78,8 +78,19 @@ typedef struct Run {
 	uint8_t contains_complex_chars;
 } Run;
 
+typedef struct Storage {
+	size_t perm_size_byte;
+	void *perm_buf;
+
+	size_t trans_size_byte;
+	void *trans_buf;
+
+	uint8_t is_initialized;
+} Storage;
+
 typedef struct Tix {
-	Arena arena;
+	Arena perm_arena;
+	Arena trans_arena;
 
 	size_t scroll_offset;
 	size_t lines_count;
@@ -92,11 +103,10 @@ typedef struct Tix {
 	ContextMode context_mode;
 	CursorMode cursor_mode;
 
-
 	char context_path[MAX_FILE_PATH];
 } Tix;
 
-void app_init(Tix *tix);
-void app_update_and_render(Tix *tix);
+void app_init(Storage *storage);
+void app_update_and_render(Storage *storage);
 
 #endif // APP_H

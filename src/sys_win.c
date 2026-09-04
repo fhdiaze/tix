@@ -38,16 +38,9 @@ typedef struct Bitmap {
 	uint8_t pixel_size_byte;
 } Bitmap;
 
-typedef struct Storage {
-	size_t perm_size_byte;
-	void *perm_base_address;
-
-	size_t trans_size_byte;
-	void *trans_base_address;
-} Storage;
-
 typedef struct WinState {
-	Storage storage;
+	size_t buf_size_byte;
+	void *buf;
 
 	uint8_t is_running;
 } WinState;
@@ -283,7 +276,11 @@ static unsigned long WINAPI render_run(void *param)
 	if (dc_handle) {
 		WinState win_state = {
 			.is_running = 1U,
-			.storage = { .perm_size_byte = MB_TO_BYTE(128ULL), .trans_size_byte = GB_TO_BYTE(4ULL), },
+		};
+
+		Storage storage = {
+			.perm_size_byte = MB_TO_BYTE(128ULL),
+			.trans_size_byte = GB_TO_BYTE(4ULL),
 		};
 
 		Bitmap backbuf = {
@@ -296,25 +293,33 @@ static unsigned long WINAPI render_run(void *param)
 									   .biCompression = BI_RGB,
 								   } };
 
-		assert(IS_POWER_OF_TWO(win_state.storage.perm_size_byte));
-		assert(IS_POWER_OF_TWO(win_state.storage.trans_size_byte));
+		assert(IS_POWER_OF_TWO(storage.perm_size_byte));
+		assert(IS_POWER_OF_TWO(storage.trans_size_byte));
 
-		// NOLINTNEXTLINE(performance-no-int-to-ptr): fixed base address for deterministic pointers across runs
-		win_state.storage.perm_base_address = VirtualAlloc(MEMORY_BASE_ADDRESS,
-		                                             win_state.storage.perm_size_byte + win_state.storage.trans_size_byte,
-		                                             MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-		if (win_state.storage.perm_base_address) {
-			win_state.storage.trans_base_address =
-				(unsigned char *)win_state.storage.perm_base_address + win_state.storage.perm_size_byte;
+		win_state.buf_size_byte = storage.perm_size_byte + storage.trans_size_byte;
+		win_state.buf =
+			// NOLINTNEXTLINE(performance-no-int-to-ptr): fixed base address for deterministic pointers across runs
+			VirtualAlloc(MEMORY_BASE_ADDRESS, win_state.buf_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		if (win_state.buf) {
+			storage.perm_buf = (unsigned char *)win_state.buf;
+			storage.trans_buf = (unsigned char *)storage.perm_buf + storage.perm_size_byte;
 		}
 
-		Arena perm_arena = {};
-		arena_init(&perm_arena, win_state.storage.perm_size_byte, win_state.storage.perm_base_address);
+		Tix *tix = (Tix *)storage.perm_buf;
+		Arena *perm_arena = &tix->perm_arena;
+		Arena *trans_arena = &tix->trans_arena;
 
-		Arena trans_arena = {};
-		arena_init(&trans_arena, win_state.storage.trans_size_byte, win_state.storage.trans_base_address);
+		if (!storage.is_initialized) {
+			arena_init(perm_arena, storage.perm_size_byte - sizeof(Tix),
+			           (unsigned char *)storage.perm_buf + sizeof(Tix));
 
-		assert(trans_arena.buf);
+			arena_init(trans_arena, storage.trans_size_byte, storage.trans_buf);
+
+			assert(trans_arena->buf);
+			assert(perm_arena->buf);
+
+			storage.is_initialized = 1U;
+		}
 
 		const char *file_path = "./test.txt";
 
@@ -327,7 +332,7 @@ static unsigned long WINAPI render_run(void *param)
 			0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
 			0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
 		};
-		Line lines[max_lines];
+		Line *lines = ARENA_PUSH_ARRAY(perm_arena, Line, max_lines);
 		size_t lines_count = 0;
 
 		HDC font_dc = CreateCompatibleDC(nullptr);
@@ -516,14 +521,14 @@ static unsigned long WINAPI render_run(void *param)
 				size_t visible_lines_count = (size_t)floorf((float)backbuf.height_px / (float)cell_height_px);
 				ptrdiff_t lines_per_notch = 3;
 
-				ptrdiff_t new_scroll_offset = (ptrdiff_t)win_state.scroll_offset;
+				ptrdiff_t new_scroll_offset = (ptrdiff_t)tix->scroll_offset;
 				new_scroll_offset -= lines_per_notch * notches;
 				new_scroll_offset = min(new_scroll_offset, (ptrdiff_t)lines_count - 1);
 				new_scroll_offset = max(new_scroll_offset, 0);
 
 				assert(new_scroll_offset >= 0);
 
-				win_state.scroll_offset = (size_t)new_scroll_offset;
+				tix->scroll_offset = (size_t)new_scroll_offset;
 
 				// =============================================================================
 				// Segmentation
@@ -536,8 +541,8 @@ static unsigned long WINAPI render_run(void *param)
 				                      BACKGROUND_COLOR_R / 255.0F, BACKGROUND_COLOR_G / 255.0F,
 				                      BACKGROUND_COLOR_B / 255.0F);
 
-				size_t last_line_idx = min(win_state.scroll_offset + visible_lines_count, lines_count);
-				for (size_t line_idx = win_state.scroll_offset; line_idx < last_line_idx; ++line_idx) {
+				size_t last_line_idx = min(tix->scroll_offset + visible_lines_count, lines_count);
+				for (size_t line_idx = tix->scroll_offset; line_idx < last_line_idx; ++line_idx) {
 					// =============================================================================
 					// Shaping
 					// =============================================================================
@@ -545,7 +550,7 @@ static unsigned long WINAPI render_run(void *param)
 					// Sometimes multiple codepoints are merged into one glyph
 
 					unsigned column_idx = 0;
-					unsigned visible_line_idx = (unsigned)(line_idx - win_state.scroll_offset);
+					unsigned visible_line_idx = (unsigned)(line_idx - tix->scroll_offset);
 					unsigned min_y_px = cell_height_px * visible_line_idx;
 
 					char *p = (char *)file.buf + lines[line_idx].start_idx;
@@ -564,8 +569,8 @@ static unsigned long WINAPI render_run(void *param)
 								DWORD glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)*p, GGO_GRAY8_BITMAP,
 								                                         &glyph_metrics, 0, nullptr, &identity);
 								if (glyph_size_byte != GDI_ERROR && glyph_size_byte &&
-								    trans_arena.offset_byte + glyph_size_byte <= trans_arena.buf_size_byte) {
-									glyph_buf = arena_push_zero(&trans_arena, glyph_size_byte);
+								    trans_arena->offset_byte + glyph_size_byte <= trans_arena->buf_size_byte) {
+									glyph_buf = arena_push_zero(trans_arena, glyph_size_byte);
 									glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)*p, GGO_GRAY8_BITMAP,
 									                                   &glyph_metrics, glyph_size_byte, glyph_buf,
 									                                   &identity);
@@ -631,7 +636,7 @@ static unsigned long WINAPI render_run(void *param)
 									//                    (float)blit_width_px, (float)blit_height_px, 0xFFFFFFU);
 								}
 
-								arena_reset(&trans_arena);
+								arena_reset(trans_arena);
 							}
 						}
 
