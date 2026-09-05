@@ -342,10 +342,17 @@ static unsigned long WINAPI render_run(void *param)
 		TEXTMETRICA text_metrics;
 		GetTextMetricsA(font_dc, &text_metrics);
 
-		unsigned cell_width_px = (unsigned)abs(text_metrics.tmAveCharWidth) + 10U;
+		unsigned cell_width_px = (unsigned)abs(text_metrics.tmAveCharWidth);
 		unsigned cell_height_px = (unsigned)abs(text_metrics.tmHeight) + (unsigned)abs(text_metrics.tmExternalLeading);
+		unsigned cell_ascent_px = (unsigned)abs(text_metrics.tmAscent); // Includes the internal leading
+
+		LARGE_INTEGER performance_frequency;
+		QueryPerformanceFrequency(&performance_frequency);
 
 		while (win_state.is_running) {
+			LARGE_INTEGER wall_clock_at_start;
+			QueryPerformanceCounter(&wall_clock_at_start);
+
 			// =============================================================================
 			// Input
 			// =============================================================================
@@ -421,10 +428,12 @@ static unsigned long WINAPI render_run(void *param)
 				}
 			}
 
+			// =============================================================================
+			// Update
+			// =============================================================================
+			size_t backbuf_pitch_size_byte = (size_t)backbuf.width_px * backbuf.pixel_size_byte;
+
 			if (backbuf.buf) {
-				// =============================================================================
-				// Update
-				// =============================================================================
 				uint32_t was_file_updated = 0U;
 				FILETIME current_write_time = {};
 				if (!file.buf) {
@@ -519,6 +528,8 @@ static unsigned long WINAPI render_run(void *param)
 				}
 
 				size_t visible_lines_count = (size_t)floorf((float)backbuf.height_px / (float)cell_height_px);
+				size_t grid_width_cell = backbuf.width_px / cell_width_px;
+				size_t grid_height_cell = backbuf.height_px / cell_height_px;
 				ptrdiff_t lines_per_notch = 3;
 
 				ptrdiff_t new_scroll_offset = (ptrdiff_t)tix->scroll_offset;
@@ -551,16 +562,14 @@ static unsigned long WINAPI render_run(void *param)
 
 					unsigned column_idx = 0;
 					unsigned visible_line_idx = (unsigned)(line_idx - tix->scroll_offset);
-					unsigned min_y_px = cell_height_px * visible_line_idx;
+					unsigned cell_min_y_px = cell_height_px * visible_line_idx;
+					unsigned baseline_y_px = cell_min_y_px + cell_ascent_px;
 
 					char *p = (char *)file.buf + lines[line_idx].start_idx;
 					while (p < (char *)file.buf + lines[line_idx].newline_idx) {
-						unsigned min_x_px = column_idx * cell_width_px;
+						unsigned cell_min_x_px = column_idx * cell_width_px;
 						if (*p != '\r') {
-							if (min_x_px + 1 < backbuf.width_px) {
-								unsigned blit_width_px = min(cell_width_px, backbuf.width_px - min_x_px);
-								unsigned blit_height_px = min(cell_height_px, backbuf.height_px - min_y_px);
-
+							if (column_idx < grid_width_cell) {
 								// rotation, shear, scale: { WORD fract; short value; }
 								static const MAT2 identity = { { 0, 1 }, { 0, 0 }, { 0, 0 }, { 0, 1 } };
 
@@ -571,26 +580,30 @@ static unsigned long WINAPI render_run(void *param)
 								if (glyph_size_byte != GDI_ERROR && glyph_size_byte &&
 								    trans_arena->offset_byte + glyph_size_byte <= trans_arena->buf_size_byte) {
 									glyph_buf = arena_push_zero(trans_arena, glyph_size_byte);
-									glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)*p, GGO_GRAY8_BITMAP,
-									                                   &glyph_metrics, glyph_size_byte, glyph_buf,
-									                                   &identity);
+									if (glyph_buf) {
+										glyph_size_byte = GetGlyphOutlineA(font_dc, (UINT)*p, GGO_GRAY8_BITMAP,
+										                                   &glyph_metrics, glyph_size_byte, glyph_buf,
+										                                   &identity);
+									}
 								}
 
 								// TODO(fredy): what happen with width 1.5F?
 								if (glyph_size_byte != GDI_ERROR) {
 									if (glyph_size_byte) {
-										unsigned glyph_width_byte = glyph_metrics.gmBlackBoxX;
-										unsigned glyph_height_byte = glyph_metrics.gmBlackBoxY;
+										unsigned glyph_width_px = glyph_metrics.gmBlackBoxX;
+										unsigned glyph_height_px = glyph_metrics.gmBlackBoxY;
 
-										blit_width_px = min(blit_width_px, glyph_width_byte);
-										blit_height_px = min(blit_height_px, glyph_height_byte);
+										unsigned min_y_px =
+											(unsigned)((signed)baseline_y_px - glyph_metrics.gmptGlyphOrigin.y);
+										unsigned min_x_px =
+											(unsigned)((signed)cell_min_x_px + glyph_metrics.gmptGlyphOrigin.x);
+
+										unsigned glyph_blit_width_px = min(cell_width_px, glyph_width_px);
+										unsigned glyph_blit_height_px = min(cell_height_px, glyph_height_px);
 
 										uint32_t row_padding_byte =
-											(sizeof(DWORD) - (size_t)glyph_width_byte % sizeof(DWORD)) % sizeof(DWORD);
-										uint32_t glyph_pitch_byte = glyph_width_byte + row_padding_byte;
-
-										size_t backbuf_pitch_size_byte =
-											(size_t)backbuf.width_px * backbuf.pixel_size_byte;
+											(sizeof(DWORD) - (size_t)glyph_width_px % sizeof(DWORD)) % sizeof(DWORD);
+										uint32_t glyph_pitch_byte = glyph_width_px + row_padding_byte;
 
 										// in memory: BB GG RR AA
 										uint8_t *dst_px_ptr = (unsigned char *)backbuf.buf +
@@ -598,8 +611,8 @@ static unsigned long WINAPI render_run(void *param)
 										                      backbuf_pitch_size_byte * min_y_px;
 										unsigned char *coverage_ptr = glyph_buf;
 
-										for (size_t y = 0; y < blit_height_px; ++y) {
-											for (size_t x = 0; x < blit_width_px; ++x) {
+										for (size_t y = 0; y < glyph_blit_height_px; ++y) {
+											for (size_t x = 0; x < glyph_blit_width_px; ++x) {
 												uint8_t blend_factor = (*coverage_ptr * 255U) / 64U;
 
 												// x/255 ~ x/256 + x/256² = (x + x/256) / 256
@@ -627,13 +640,14 @@ static unsigned long WINAPI render_run(void *param)
 											}
 
 											dst_px_ptr += backbuf_pitch_size_byte -
-											              (size_t)blit_width_px * backbuf.pixel_size_byte;
-											coverage_ptr += glyph_pitch_byte - blit_width_px;
+											              (size_t)glyph_blit_width_px * backbuf.pixel_size_byte;
+											coverage_ptr += glyph_pitch_byte - glyph_blit_width_px;
 										}
 									}
 
-									// bitmap_draw_border(&backbuf, (float)min_x_px, (float)min_y_px,
-									//                    (float)blit_width_px, (float)blit_height_px, 0xFFFFFFU);
+									// bitmap_draw_border(&backbuf, (float)cell_min_x_px, (float)cell_min_y_px,
+									//                    (float)cell_blit_width_px, (float)cell_blit_height_px,
+									//                    0xFFFFFFU);
 								}
 
 								arena_reset(trans_arena);
@@ -660,6 +674,17 @@ static unsigned long WINAPI render_run(void *param)
 			// =============================================================================
 			// Present
 			// =============================================================================
+			LARGE_INTEGER wall_clock_at_end;
+			QueryPerformanceCounter(&wall_clock_at_end);
+
+			float frame_time_s = (float)(wall_clock_at_end.QuadPart - wall_clock_at_start.QuadPart) /
+			                     (float)performance_frequency.QuadPart;
+
+			char window_title[256];
+			(void)snprintf(window_title, sizeof(window_title),  "tix - ft: %fs, fps: %f", (double)frame_time_s, 1.0 / (double)frame_time_s);
+
+			SetWindowTextA(window, window_title);
+
 			bitmap_info.bmiHeader.biWidth = (long)backbuf.width_px;
 			bitmap_info.bmiHeader.biHeight = -(long)backbuf.height_px;
 			SetDIBitsToDevice(dc_handle, 0, 0, backbuf.width_px, backbuf.height_px, 0, 0, 0, backbuf.height_px,

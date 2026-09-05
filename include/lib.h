@@ -13,7 +13,6 @@
 // =============================================================================
 // Compiler detection
 // =============================================================================
-
 #ifndef LIB_COMPILER_MSVC
 #define LIB_COMPILER_MSVC 0
 #endif
@@ -39,7 +38,6 @@
 // =============================================================================
 // Standard
 // =============================================================================
-
 #if DEBUG
 #if LIB_COMPILER_MSVC
 #define ASSERT(cond)        \
@@ -56,7 +54,6 @@
 // =============================================================================
 // Bit operations
 // =============================================================================
-
 /**
  * @brief Count trailing zeroes - returns the index of the first least-significant non-zero bit if there is one.
  *
@@ -94,7 +91,6 @@ uint32_t uint_ctz(uint32_t value, uint32_t *count)
 // =============================================================================
 // Math
 // =============================================================================
-
 #define IS_POWER_OF_TWO(v) (((v) & ((v) - 1)) == 0)
 
 typedef union Vtwo {
@@ -308,7 +304,6 @@ inline Vtwo vtwo_normalize(Vtwo a)
 // =============================================================================
 // Memory
 // =============================================================================
-
 #define KB_TO_BYTE(_pr_v) ((_pr_v) * 1024)
 #define MB_TO_BYTE(_pr_v) (KB_TO_BYTE(_pr_v) * 1024)
 #define GB_TO_BYTE(_pr_v) (MB_TO_BYTE(_pr_v) * 1024)
@@ -327,6 +322,10 @@ typedef struct Arena {
 	size_t prev_offset_byte;
 } Arena;
 
+typedef struct ScratchArena {
+	Arena *arena;
+} ScratchArena;
+
 void arena_init(Arena *restrict arena, const size_t buf_size_byte, unsigned char *const restrict buf)
 {
 	arena->buf_size_byte = buf_size_byte;
@@ -336,10 +335,12 @@ void arena_init(Arena *restrict arena, const size_t buf_size_byte, unsigned char
 
 void *arena_push(Arena *arena, size_t size_byte)
 {
-	assert(arena->offset_byte + size_byte <= arena->buf_size_byte);
+	void *result = nullptr;
 
-	void *result = arena->buf + arena->offset_byte;
-	arena->offset_byte += size_byte;
+	if (arena->offset_byte + size_byte <= arena->buf_size_byte) {
+		result = arena->buf + arena->offset_byte;
+		arena->offset_byte += size_byte;
+	}
 
 	return result;
 }
@@ -347,8 +348,9 @@ void *arena_push(Arena *arena, size_t size_byte)
 void *arena_push_zero(Arena *arena, size_t size_byte)
 {
 	void *result = arena_push(arena, size_byte);
-
-	memset(result, 0, size_byte);
+	if (result) {
+		memset(result, 0, size_byte);
+	}
 
 	return result;
 }
@@ -358,17 +360,25 @@ void arena_reset(Arena *arena)
 	arena->offset_byte = 0;
 }
 
+void arena_get_scratch(Arena *arena, ScratchArena *scratch)
+{
+	scratch->arena = arena;
+}
+
+void scratch_reset(ScratchArena *scratch)
+{
+	scratch->arena->offset_byte = scratch->arena->prev_offset_byte;
+}
+
 // =============================================================================
 // String
 // =============================================================================
-
 #define STRINGIFY(n) #n
 #define XSTRINGIFY(n) STRINGIFY(n)
 
 // =============================================================================
 // Logging
 // =============================================================================
-
 #define LOG_TSTAMP_BUF_SIZE 32
 #define LOG_LEVEL_ALL 0UL
 #define LOG_LEVEL_TRACE 1UL

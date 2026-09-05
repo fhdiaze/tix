@@ -48,7 +48,9 @@ typedef enum CursorMode : uint8_t {
 } CursorMode;
 
 typedef struct Cell {
-	char c;
+	uint32_t glyph_index;
+	uint32_t foreground;
+	uint32_t background;
 } Cell;
 
 /**
