@@ -15,6 +15,9 @@
 
 #define MAX_FILE_PATH 4096
 #define MAX_KEYBOARD_KEYS 256
+#define MIN_DIRECT_CODE_POINT 32
+#define MAX_DIRECT_CODE_POINT 126
+#define DIRECT_CODE_POINTS_COUNT (MAX_DIRECT_CODE_POINT - MIN_DIRECT_CODE_POINT + 1)
 
 typedef struct KeyState {
 	// Half transition count per frame
@@ -38,13 +41,14 @@ typedef struct TixInput {
 } TixInput;
 
 typedef enum ContextMode : uint8_t {
-	CONTEXT_MODE_FOLDER = 0,
-	CONTEXT_MODE_FILE = 1,
+	CONTEXT_MODE_FOLDER,
+	CONTEXT_MODE_FILE,
 } ContextMode;
 
 typedef enum CursorMode : uint8_t {
-	CURSOR_MODE_NORMAL = 0,
-	CURSOR_MODE_VIEW = 1,
+	CURSOR_MODE_NORMAL,
+	CURSOR_MODE_VIEW,
+	CURSOR_MODE_INSERT,
 } CursorMode;
 
 typedef struct Cell {
@@ -52,6 +56,34 @@ typedef struct Cell {
 	uint32_t foreground;
 	uint32_t background;
 } Cell;
+
+typedef struct GlyphIndex {
+	uint32_t value;
+} GlyphIndex;
+
+typedef struct GlyphOutline {
+	void *buf;
+
+	GlyphIndex index;
+
+	uint16_t width_px;
+	uint16_t height_px;
+	uint16_t pitch_px;
+	uint8_t pixel_size_byte;
+} GlyphOutline;
+
+typedef struct GlyphSlot {
+	GlyphIndex glyph_index;
+	uint8_t filled;
+} GlyphSlot;
+
+typedef struct GlyphAtlas {
+	void *buf;
+	size_t buf_size_byte;
+
+	uint16_t glyph_width_byte;
+	uint16_t glyph_height_byte;
+} GlyphAtlas;
 
 /**
  * @brief
@@ -101,6 +133,8 @@ typedef struct Tix {
 	size_t caret_column;
 
 	Grid grid;
+
+	GlyphIndex *reserved_glyph_slots[DIRECT_CODE_POINTS_COUNT];
 
 	ContextMode context_mode;
 	CursorMode cursor_mode;

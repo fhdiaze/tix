@@ -114,6 +114,112 @@ static void bitmap_draw_border(Bitmap *bitmap, float min_x_px_f, float min_y_px_
 	}
 }
 
+static uint32_t copy_rect(unsigned char *src_buf, size_t src_width, size_t src_height, size_t src_offset_x,
+                          size_t src_offset_y, size_t src_pitch, unsigned char *dst_buf, size_t dst_width,
+                          size_t dst_height, size_t dst_offset_x, size_t dst_offset_y, size_t dst_pitch)
+{
+	uint32_t error_code = 0U;
+
+	assert(src_width <= dst_width);
+	assert(src_height <= dst_height);
+
+	if (src_width <= dst_width && src_height <= dst_height) {
+		unsigned char *dst_ptr = dst_buf + dst_offset_x + dst_pitch * dst_offset_y;
+		unsigned char *src_ptr = src_buf + src_offset_x + src_pitch * src_offset_y;
+
+		for (size_t y = 0; y < src_height; ++y) {
+			for (size_t x = 0; x < src_width; ++x) {
+				*dst_ptr = *src_ptr;
+
+				++dst_ptr;
+				++src_ptr;
+			}
+
+			dst_ptr += dst_pitch - src_width;
+			src_ptr += src_pitch - src_width;
+		}
+	} else {
+		error_code = 1U;
+	}
+
+	return error_code;
+}
+
+/**
+ * @brief Rasterizes a glyph, allocating its bitmap from the given arena.
+ *
+ * @param glyph_index The index of the glyph in the glyph atlas.
+ * @param arena Arena used to allocate the resulting bitmap.
+ * @return uint32_t 0 on success. Non-zero on failure, e.g. if the allocation fails.
+ */
+static uint32_t rasterize_glyph(HDC font_dc, GlyphIndex glyph_index, Arena *arena, uint32_t baseline_y_px,
+                                unsigned char *target_buf, uint32_t target_width_px, uint32_t target_height_px,
+                                uint32_t target_pixel_size_byte)
+{
+	uint32_t error_code = 0U;
+
+	// rotation, shear, scale: { WORD fract; short value; }
+	static const MAT2 identity = { { 0, 1 }, { 0, 0 }, { 0, 0 }, { 0, 1 } };
+
+	unsigned char *glyph_buf = nullptr;
+	GLYPHMETRICS glyph_metrics;
+	DWORD glyph_size_byte =
+		GetGlyphOutlineA(font_dc, glyph_index.value, GGO_GRAY8_BITMAP, &glyph_metrics, 0, nullptr, &identity);
+	if (glyph_size_byte != GDI_ERROR && glyph_size_byte && glyph_size_byte <= target_width_px * target_height_px) {
+		glyph_buf = arena_push_zero(arena, glyph_size_byte);
+
+		if (glyph_buf) {
+			glyph_size_byte = GetGlyphOutlineA(font_dc, glyph_index.value, GGO_GRAY8_BITMAP, &glyph_metrics,
+			                                   glyph_size_byte, glyph_buf, &identity);
+		} else {
+			error_code = 1U;
+		}
+	}
+
+	if (glyph_size_byte != GDI_ERROR) {
+		if (glyph_size_byte) {
+			unsigned ink_width_px = glyph_metrics.gmBlackBoxX;
+			unsigned ink_height_px = glyph_metrics.gmBlackBoxY;
+
+			assert(ink_width_px <= target_width_px);
+			assert(ink_height_px <= target_height_px);
+
+			if (ink_width_px <= target_width_px && ink_height_px <= target_height_px) {
+				uint32_t target_min_x_px = target_width_px / 2 - ink_width_px / 2;
+				uint32_t target_min_y_px = target_height_px / 2 - ink_height_px / 2;
+
+				uint32_t row_padding_byte = (sizeof(DWORD) - (size_t)ink_width_px % sizeof(DWORD)) % sizeof(DWORD);
+				uint32_t src_pitch_byte = ink_width_px + row_padding_byte;
+
+				unsigned ink_min_x_px = (unsigned)((signed)target_min_x_px + glyph_metrics.gmptGlyphOrigin.x);
+				unsigned ink_min_y_px = (unsigned)((signed)baseline_y_px - glyph_metrics.gmptGlyphOrigin.y);
+
+				unsigned blit_width_px = min(target_width_px, ink_width_px);
+				unsigned blit_height_px = min(target_height_px, ink_height_px);
+
+				uint8_t *dst_ptr = target_buf + (size_t)target_min_x_px + (size_t)target_width_px * target_min_y_px;
+				unsigned char *src_ptr = glyph_buf;
+
+				for (size_t y = 0; y < blit_height_px; ++y) {
+					for (size_t x = 0; x < blit_width_px; ++x) {
+						*dst_ptr = *src_ptr;
+
+						++dst_ptr;
+						++src_ptr;
+					}
+
+					dst_ptr += target_width_px - (size_t)blit_width_px * target_pixel_size_byte;
+					src_ptr += src_pitch_byte - blit_width_px;
+				}
+			} else {
+				error_code = 1U;
+			}
+		}
+	}
+
+	return error_code;
+}
+
 /**
  * @brief max_x_px_f and max_y_px_f are not included
  *
@@ -325,13 +431,8 @@ static unsigned long WINAPI render_run(void *param)
 
 		ReadFileResult file = {};
 		FILETIME file_previous_write_time = {};
+
 		constexpr uint32_t max_lines = 1000;
-		static uint8_t overhang_mask[64] = {
-			255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-			255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-			0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-			0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-		};
 		Line *lines = ARENA_PUSH_ARRAY(perm_arena, Line, max_lines);
 		size_t lines_count = 0;
 
@@ -464,6 +565,12 @@ static unsigned long WINAPI render_run(void *param)
 
 					// TODO(fredy): should it be a circular buffer?
 					if (file.buf) {
+						static uint8_t overhang_mask[64] = {
+							255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+							255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+							0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+							0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+						};
 						char *buf = (char *)file.buf;
 						size_t remaining_byte_count = file.size_byte;
 
@@ -529,7 +636,6 @@ static unsigned long WINAPI render_run(void *param)
 
 				size_t visible_lines_count = (size_t)floorf((float)backbuf.height_px / (float)cell_height_px);
 				size_t grid_width_cell = backbuf.width_px / cell_width_px;
-				size_t grid_height_cell = backbuf.height_px / cell_height_px;
 				ptrdiff_t lines_per_notch = 3;
 
 				ptrdiff_t new_scroll_offset = (ptrdiff_t)tix->scroll_offset;
@@ -568,7 +674,10 @@ static unsigned long WINAPI render_run(void *param)
 					char *p = (char *)file.buf + lines[line_idx].start_idx;
 					while (p < (char *)file.buf + lines[line_idx].newline_idx) {
 						unsigned cell_min_x_px = column_idx * cell_width_px;
-						if (*p != '\r') {
+						int glyph_idx = *p - glyph_zero_idx;
+
+						if (glyph_idx >= MIN_DIRECT_CODE_POINT && glyph_idx <= MAX_DIRECT_CODE_POINT) {
+						} else if (*p != '\r') {
 							if (column_idx < grid_width_cell) {
 								// rotation, shear, scale: { WORD fract; short value; }
 								static const MAT2 identity = { { 0, 1 }, { 0, 0 }, { 0, 0 }, { 0, 1 } };
@@ -681,7 +790,8 @@ static unsigned long WINAPI render_run(void *param)
 			                     (float)performance_frequency.QuadPart;
 
 			char window_title[256];
-			(void)snprintf(window_title, sizeof(window_title),  "tix - ft: %fs, fps: %f", (double)frame_time_s, 1.0 / (double)frame_time_s);
+			(void)snprintf(window_title, sizeof(window_title), "tix - ft: %fms, fps: %f",
+			               (double)(1000.0F * frame_time_s), 1.0 / (double)frame_time_s);
 
 			SetWindowTextA(window, window_title);
 

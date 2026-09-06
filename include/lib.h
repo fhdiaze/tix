@@ -337,6 +337,8 @@ void *arena_push(Arena *arena, size_t size_byte)
 {
 	void *result = nullptr;
 
+	assert(arena->offset_byte + size_byte <= arena->buf_size_byte);
+
 	if (arena->offset_byte + size_byte <= arena->buf_size_byte) {
 		result = arena->buf + arena->offset_byte;
 		arena->offset_byte += size_byte;
