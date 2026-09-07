@@ -114,32 +114,32 @@ static void bitmap_draw_border(Bitmap *bitmap, float min_x_px_f, float min_y_px_
 	}
 }
 
-static uint32_t copy_rect(unsigned char *src_buf, size_t src_width, size_t src_height, size_t src_offset_x,
-                          size_t src_offset_y, size_t src_pitch, unsigned char *dst_buf, size_t dst_width,
-                          size_t dst_height, size_t dst_offset_x, size_t dst_offset_y, size_t dst_pitch)
+static uint32_t bitmap_copy_rect(unsigned char *src_buf, size_t src_width, size_t src_height, size_t src_pitch,
+                                 size_t src_offset_x, size_t src_offset_y, unsigned char *dst_buf, size_t dst_width,
+                                 size_t dst_height, size_t dst_pitch, size_t dst_offset_x, size_t dst_offset_y,
+                                 size_t blit_width, size_t blit_height)
 {
 	uint32_t error_code = 0U;
 
-	assert(src_width <= dst_width);
-	assert(src_height <= dst_height);
+	assert(src_offset_x + blit_width <= src_width);
+	assert(src_offset_y + blit_height <= src_height);
 
-	if (src_width <= dst_width && src_height <= dst_height) {
-		unsigned char *dst_ptr = dst_buf + dst_offset_x + dst_pitch * dst_offset_y;
-		unsigned char *src_ptr = src_buf + src_offset_x + src_pitch * src_offset_y;
+	assert(dst_offset_x + blit_width <= dst_width);
+	assert(dst_offset_y + blit_height <= dst_height);
 
-		for (size_t y = 0; y < src_height; ++y) {
-			for (size_t x = 0; x < src_width; ++x) {
-				*dst_ptr = *src_ptr;
+	unsigned char *dst_ptr = dst_buf + dst_offset_x + dst_pitch * dst_offset_y;
+	unsigned char *src_ptr = src_buf + src_offset_x + src_pitch * src_offset_y;
 
-				++dst_ptr;
-				++src_ptr;
-			}
+	for (size_t y = 0; y < blit_height; ++y) {
+		for (size_t x = 0; x < blit_width; ++x) {
+			*dst_ptr = *src_ptr;
 
-			dst_ptr += dst_pitch - src_width;
-			src_ptr += src_pitch - src_width;
+			++dst_ptr;
+			++src_ptr;
 		}
-	} else {
-		error_code = 1U;
+
+		dst_ptr += dst_pitch - src_width;
+		src_ptr += src_pitch - src_width;
 	}
 
 	return error_code;
@@ -152,9 +152,9 @@ static uint32_t copy_rect(unsigned char *src_buf, size_t src_width, size_t src_h
  * @param arena Arena used to allocate the resulting bitmap.
  * @return uint32_t 0 on success. Non-zero on failure, e.g. if the allocation fails.
  */
-static uint32_t rasterize_glyph(HDC font_dc, GlyphIndex glyph_index, Arena *arena, uint32_t baseline_y_px,
-                                unsigned char *target_buf, uint32_t target_width_px, uint32_t target_height_px,
-                                uint32_t target_pixel_size_byte)
+static uint32_t glyph_rasterize(HDC font_dc, GlyphIndex glyph_index, Arena *arena, uint32_t ascent_y_byte,
+                                unsigned char *dst_buf, uint32_t dst_width_byte, uint32_t dst_height_byte,
+                                size_t dst_pitch_byte)
 {
 	uint32_t error_code = 0U;
 
@@ -165,7 +165,7 @@ static uint32_t rasterize_glyph(HDC font_dc, GlyphIndex glyph_index, Arena *aren
 	GLYPHMETRICS glyph_metrics;
 	DWORD glyph_size_byte =
 		GetGlyphOutlineA(font_dc, glyph_index.value, GGO_GRAY8_BITMAP, &glyph_metrics, 0, nullptr, &identity);
-	if (glyph_size_byte != GDI_ERROR && glyph_size_byte && glyph_size_byte <= target_width_px * target_height_px) {
+	if (glyph_size_byte != GDI_ERROR && glyph_size_byte && glyph_size_byte <= dst_width_byte * dst_height_byte) {
 		glyph_buf = arena_push_zero(arena, glyph_size_byte);
 
 		if (glyph_buf) {
@@ -178,38 +178,29 @@ static uint32_t rasterize_glyph(HDC font_dc, GlyphIndex glyph_index, Arena *aren
 
 	if (glyph_size_byte != GDI_ERROR) {
 		if (glyph_size_byte) {
-			unsigned ink_width_px = glyph_metrics.gmBlackBoxX;
-			unsigned ink_height_px = glyph_metrics.gmBlackBoxY;
+			assert(dst_width_byte >= glyph_metrics.gmBlackBoxX);
+			assert(dst_height_byte >= glyph_metrics.gmBlackBoxY);
+			if (dst_width_byte >= glyph_metrics.gmBlackBoxX && dst_height_byte >= glyph_metrics.gmBlackBoxY) {
+				uint32_t dst_offset_x_byte = (dst_width_byte - glyph_metrics.gmBlackBoxX) / 2;
+				uint32_t dst_offset_y_byte = (dst_height_byte - glyph_metrics.gmBlackBoxX) / 2;
 
-			assert(ink_width_px <= target_width_px);
-			assert(ink_height_px <= target_height_px);
+				uint32_t glyph_row_padding_byte =
+					(sizeof(DWORD) - (size_t)glyph_metrics.gmBlackBoxX % sizeof(DWORD)) % sizeof(DWORD);
+				uint32_t glyph_width_byte = glyph_metrics.gmBlackBoxX + glyph_row_padding_byte;
 
-			if (ink_width_px <= target_width_px && ink_height_px <= target_height_px) {
-				uint32_t target_min_x_px = target_width_px / 2 - ink_width_px / 2;
-				uint32_t target_min_y_px = target_height_px / 2 - ink_height_px / 2;
+				uint32_t glyph_offset_x_byte = 0;
+				int32_t glyph_offset_y_byte = (signed)ascent_y_byte - glyph_metrics.gmptGlyphOrigin.y;
 
-				uint32_t row_padding_byte = (sizeof(DWORD) - (size_t)ink_width_px % sizeof(DWORD)) % sizeof(DWORD);
-				uint32_t src_pitch_byte = ink_width_px + row_padding_byte;
+				assert(glyph_offset_y_byte >= 0);
+				assert(glyph_offset_y_byte < (signed)dst_height_byte);
 
-				unsigned ink_min_x_px = (unsigned)((signed)target_min_x_px + glyph_metrics.gmptGlyphOrigin.x);
-				unsigned ink_min_y_px = (unsigned)((signed)baseline_y_px - glyph_metrics.gmptGlyphOrigin.y);
-
-				unsigned blit_width_px = min(target_width_px, ink_width_px);
-				unsigned blit_height_px = min(target_height_px, ink_height_px);
-
-				uint8_t *dst_ptr = target_buf + (size_t)target_min_x_px + (size_t)target_width_px * target_min_y_px;
-				unsigned char *src_ptr = glyph_buf;
-
-				for (size_t y = 0; y < blit_height_px; ++y) {
-					for (size_t x = 0; x < blit_width_px; ++x) {
-						*dst_ptr = *src_ptr;
-
-						++dst_ptr;
-						++src_ptr;
-					}
-
-					dst_ptr += target_width_px - (size_t)blit_width_px * target_pixel_size_byte;
-					src_ptr += src_pitch_byte - blit_width_px;
+				if (glyph_offset_y_byte >= 0 && glyph_offset_y_byte < (signed)dst_height_byte) {
+					bitmap_copy_rect(glyph_buf, glyph_width_byte, glyph_metrics.gmBlackBoxY, glyph_width_byte,
+					                 glyph_offset_x_byte, (uint32_t)glyph_offset_y_byte, dst_buf, dst_width_byte,
+					                 dst_height_byte, dst_pitch_byte, dst_offset_x_byte, dst_offset_y_byte,
+					                 glyph_metrics.gmBlackBoxX, glyph_metrics.gmBlackBoxY);
+				} else {
+					error_code = 1U;
 				}
 			} else {
 				error_code = 1U;
@@ -674,9 +665,12 @@ static unsigned long WINAPI render_run(void *param)
 					char *p = (char *)file.buf + lines[line_idx].start_idx;
 					while (p < (char *)file.buf + lines[line_idx].newline_idx) {
 						unsigned cell_min_x_px = column_idx * cell_width_px;
-						int glyph_idx = *p - glyph_zero_idx;
+						int32_t glyph_idx = *p - MIN_DIRECT_CODE_POINT;
 
 						if (glyph_idx >= MIN_DIRECT_CODE_POINT && glyph_idx <= MAX_DIRECT_CODE_POINT) {
+							unsigned char *tmp_buf[1000];
+							glyph_rasterize(font_dc, (GlyphIndex){ .value = (uint32_t)*p }, trans_arena, cell_ascent_px,
+							                tmp_buf[0], cell_width_px, cell_height_px, cell_width_px);
 						} else if (*p != '\r') {
 							if (column_idx < grid_width_cell) {
 								// rotation, shear, scale: { WORD fract; short value; }
