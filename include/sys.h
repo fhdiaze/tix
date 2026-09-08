@@ -3,8 +3,6 @@
 #ifndef SYS_H
 #define SYS_H
 
-#include "app.h"
-#include "lib.h"
 typedef struct ReadFileResult {
 	size_t size_byte;
 	void *buf;
