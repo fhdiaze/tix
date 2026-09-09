@@ -93,6 +93,22 @@ uint32_t uint_ctz(uint32_t value, uint32_t *count)
 // =============================================================================
 #define IS_POWER_OF_TWO(v) (((v) & ((v) - 1)) == 0)
 
+typedef union VFour {
+	struct {
+		float x;
+		float y;
+		float z;
+		float w;
+	};
+
+	struct {
+		float r;
+		float g;
+		float b;
+		float a;
+	};
+} VFour;
+
 typedef union Vtwo {
 	struct {
 		float x;
