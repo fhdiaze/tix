@@ -219,6 +219,57 @@ static uint32_t glyph_rasterize(HDC font_dc, uint32_t code, Arena *arena, unsign
 	return error_code;
 }
 
+// static inline uint32_t bitmap_draw_raster()
+// {
+// 	unsigned glyph_width_px = glyph_metrics.gmBlackBoxX;
+// 	unsigned glyph_height_px = glyph_metrics.gmBlackBoxY;
+
+// 	unsigned min_y_px = (unsigned)((signed)baseline_y_px - glyph_metrics.gmptGlyphOrigin.y);
+// 	unsigned min_x_px = (unsigned)((signed)tile_min_x_px + glyph_metrics.gmptGlyphOrigin.x);
+
+// 	unsigned glyph_blit_width_px = min(tile_width_px, glyph_width_px);
+// 	unsigned glyph_blit_height_px = min(tile_height_px, glyph_height_px);
+
+// 	uint32_t row_padding_byte = (sizeof(DWORD) - (size_t)glyph_width_px % sizeof(DWORD)) % sizeof(DWORD);
+// 	uint32_t glyph_pitch_byte = glyph_width_px + row_padding_byte;
+
+// 	// in memory: BB GG RR AA
+// 	uint8_t *dst_px_ptr = (unsigned char *)backbuf.buf + (size_t)(min_x_px * backbuf.pixel_size_byte) +
+// 	                      backbuf_pitch_size_byte * min_y_px;
+// 	unsigned char *coverage_ptr = glyph_buf;
+
+// 	for (size_t y = 0; y < glyph_blit_height_px; ++y) {
+// 		for (size_t x = 0; x < glyph_blit_width_px; ++x) {
+// 			uint8_t blend_factor = (*coverage_ptr * 255U) / 64U;
+
+// 			// x/255 ~ x/256 + x/256² = (x + x/256) / 256
+
+// 			// blue
+// 			uint32_t blended = 0x00U * blend_factor + *dst_px_ptr * (255 - blend_factor);
+// 			*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+// 			// green
+// 			++dst_px_ptr;
+// 			blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
+// 			*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+// 			// red
+// 			++dst_px_ptr;
+// 			blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
+// 			*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+// 			// alpha
+// 			++dst_px_ptr;
+
+// 			++dst_px_ptr;
+// 			++coverage_ptr;
+// 		}
+
+// 		dst_px_ptr += backbuf_pitch_size_byte - (size_t)glyph_blit_width_px * backbuf.pixel_size_byte;
+// 		coverage_ptr += glyph_pitch_byte - glyph_blit_width_px;
+// 	}
+// }
+
 /**
  * @brief max_x_px_f and max_y_px_f are not included
  *
@@ -467,6 +518,8 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		}
 
+		arena_reset(trans_arena);
+
 		LARGE_INTEGER performance_frequency;
 		QueryPerformanceFrequency(&performance_frequency);
 
@@ -689,7 +742,6 @@ static unsigned long WINAPI render_run(void *param)
 
 					unsigned tile_col = 0;
 					unsigned tile_min_y_px = tile_height_px * tile_row;
-					unsigned baseline_y_px = tile_min_y_px + tile_ascent_px;
 
 					char *p = (char *)file.buf + file_lines[line_idx].start_idx;
 					GlyphIndex glyph_idx = {};
@@ -698,22 +750,59 @@ static unsigned long WINAPI render_run(void *param)
 						unsigned tile_min_x_px = tile_col * tile_width_px;
 
 						if (*p >= MIN_DIRECT_CODE_POINT && *p <= MAX_DIRECT_CODE_POINT) {
-							glyph_idx.value = (unsigned)-MIN_DIRECT_CODE_POINT;
+							glyph_idx.value = (unsigned char)*p - MIN_DIRECT_CODE_POINT;
 
-							glyph_buf = font_arena.buf + (size_t)glyph_idx.value * tile_size_byte;
+							glyph_buf = glyph_atlas + (size_t)glyph_idx.value * tile_size_byte;
 
-							bitmap_copy_rect(unsigned char *src_buf, size_t src_width, size_t src_height,
-							                 size_t src_pitch, size_t src_offset_x, size_t src_offset_y,
-							                 unsigned char *dst_buf, size_t dst_width, size_t dst_height,
-							                 size_t dst_pitch, size_t dst_offset_x, size_t dst_offset_y,
-							                 size_t blit_width, size_t blit_height);
+							// TODO(fredy): what happen with width 1.5F?
+
+							// in memory: BB GG RR AA
+							uint8_t *dst_px_ptr = (unsigned char *)backbuf.buf +
+							                      (size_t)(tile_min_x_px * backbuf.pixel_size_byte) +
+							                      backbuf_pitch_size_byte * tile_min_y_px;
+							unsigned char *coverage_ptr = glyph_buf;
+
+							for (size_t y = 0; y < tile_height_px; ++y) {
+								for (size_t x = 0; x < tile_width_px; ++x) {
+									uint8_t blend_factor = (*coverage_ptr * 255U) / 64U;
+
+									// x/255 ~ x/256 + x/256² = (x + x/256) / 256
+
+									// blue
+									uint32_t blended = 0x00U * blend_factor + *dst_px_ptr * (255 - blend_factor);
+									*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+									// green
+									++dst_px_ptr;
+									blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
+									*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+									// red
+									++dst_px_ptr;
+									blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
+									*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+
+									// alpha
+									++dst_px_ptr;
+
+									++dst_px_ptr;
+									++coverage_ptr;
+								}
+
+								dst_px_ptr += backbuf_pitch_size_byte - (size_t)tile_width_px * backbuf.pixel_size_byte;
+								++coverage_ptr;
+
+								// bitmap_draw_border(&backbuf, (float)cell_min_x_px, (float)cell_min_y_px,
+								//                    (float)cell_blit_width_px, (float)cell_blit_height_px,
+								//                    0xFFFFFFU);
+							}
 						}
-
-						arena_reset(trans_arena);
 
 						++tile_col;
 						++p;
 					}
+
+					++tile_row;
 				}
 			}
 
