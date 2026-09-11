@@ -133,13 +133,14 @@ static uint32_t bitmap_copy_rect(unsigned char *src_buf, size_t src_width, size_
 	for (size_t y = 0; y < blit_height; ++y) {
 		for (size_t x = 0; x < blit_width; ++x) {
 			*dst_ptr = *src_ptr;
+			// *dst_ptr = 255;
 
 			++dst_ptr;
 			++src_ptr;
 		}
 
-		dst_ptr += dst_pitch - src_width;
-		src_ptr += src_pitch - src_width;
+		dst_ptr += dst_pitch - blit_width;
+		src_ptr += src_pitch - blit_width;
 	}
 
 	return error_code;
@@ -200,6 +201,9 @@ static uint32_t glyph_rasterize(HDC font_dc, uint32_t code, Arena *arena, unsign
 						                 glyph_offset_x_byte, (uint32_t)glyph_offset_y_byte, dst_buf, dst_width_byte,
 						                 dst_height_byte, dst_pitch_byte, dst_offset_x_byte, dst_offset_y_byte,
 						                 glyph_metrics.gmBlackBoxX, glyph_metrics.gmBlackBoxY);
+						// bitmap_copy_rect(glyph_buf, 1, dst_height_byte, 1, 0, 0, dst_buf, dst_width_byte,
+						//                  dst_height_byte, dst_pitch_byte, 0, 0, 1, dst_height_byte);
+
 					} else {
 						error_code = 1U;
 					}
@@ -493,7 +497,7 @@ static unsigned long WINAPI render_run(void *param)
 		TEXTMETRICA text_metrics;
 		GetTextMetricsA(font_dc, &text_metrics);
 
-		unsigned tile_width_px = (unsigned)abs(text_metrics.tmAveCharWidth) + 5;
+		unsigned tile_width_px = (unsigned)abs(text_metrics.tmAveCharWidth) + 7;
 		unsigned tile_height_px = (unsigned)abs(text_metrics.tmHeight) + (unsigned)abs(text_metrics.tmExternalLeading);
 		unsigned tile_ascent_px = (unsigned)abs(text_metrics.tmAscent); // Includes the internal leading
 		unsigned tile_size_byte = tile_width_px * tile_height_px;
@@ -751,6 +755,7 @@ static unsigned long WINAPI render_run(void *param)
 
 						if (*p >= MIN_DIRECT_CODE_POINT && *p <= MAX_DIRECT_CODE_POINT) {
 							glyph_idx.value = (unsigned char)*p - MIN_DIRECT_CODE_POINT;
+							// glyph_idx.value = 'a' - MIN_DIRECT_CODE_POINT;
 
 							glyph_buf = glyph_atlas + (size_t)glyph_idx.value * tile_size_byte;
 
@@ -790,7 +795,6 @@ static unsigned long WINAPI render_run(void *param)
 								}
 
 								dst_px_ptr += backbuf_pitch_size_byte - (size_t)tile_width_px * backbuf.pixel_size_byte;
-								++coverage_ptr;
 
 								// bitmap_draw_border(&backbuf, (float)cell_min_x_px, (float)cell_min_y_px,
 								//                    (float)cell_blit_width_px, (float)cell_blit_height_px,
