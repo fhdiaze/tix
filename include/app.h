@@ -51,66 +51,23 @@ typedef enum CursorMode : uint8_t {
 	CURSOR_MODE_INSERT,
 } CursorMode;
 
-typedef struct Cell {
-	uint32_t glyph_index;
-	uint32_t foreground;
-	uint32_t background;
-} Cell;
-
-typedef struct GlyphIndex {
+typedef struct GlyphIdx {
 	uint32_t value;
-} GlyphIndex;
+} GlyphIdx;
 
-typedef struct GlyphOutline {
-	void *buf;
+typedef struct Tile {
+	GlyphIdx glyph_idx;
 
-	GlyphIndex index;
-
-	uint16_t width_px;
-	uint16_t height_px;
-	uint16_t pitch_px;
-	uint8_t pixel_size_byte;
-} GlyphOutline;
-
-typedef struct GlyphSlot {
-	GlyphIndex glyph_index;
-	uint8_t filled;
-} GlyphSlot;
-
-typedef struct GlyphAtlas {
-	void *buf;
-	size_t buf_size_byte;
-
-	uint16_t glyph_width_byte;
-	uint16_t glyph_height_byte;
-} GlyphAtlas;
-
-/**
- * @brief
- *
- */
-typedef struct Point {
-	size_t x;
-	size_t y;
-} Point;
-
-typedef struct Grid {
-	Cell *cells;
-	uint32_t width;
-	uint32_t height;
-} Grid;
+	uint32_t fg;
+	uint32_t bg;
+	uint32_t flags;
+} Tile;
 
 typedef struct Line {
 	size_t start_idx;
 	size_t newline_idx;
 	uint8_t contains_complex_chars;
 } Line;
-
-typedef struct Run {
-	size_t starts_at_byte;
-	size_t ends_at_plus_one_byte;
-	uint8_t contains_complex_chars;
-} Run;
 
 typedef struct Storage {
 	size_t perm_size_byte;
@@ -132,9 +89,12 @@ typedef struct Tix {
 	size_t caret_line;
 	size_t caret_column;
 
-	Grid grid;
+	Tile *tiles;
+	uint32_t width_tile;
+	uint32_t height_tile;
 
-	GlyphIndex *reserved_glyph_slots[DIRECT_CODE_POINTS_COUNT];
+	void *atlas_buf;
+	size_t atlas_buf_size_byte;
 
 	ContextMode context_mode;
 	CursorMode cursor_mode;

@@ -93,7 +93,7 @@ uint32_t uint_ctz(uint32_t value, uint32_t *count)
 // =============================================================================
 #define IS_POWER_OF_TWO(v) (((v) & ((v) - 1)) == 0)
 
-typedef union VFour {
+typedef union Vfour {
 	struct {
 		float x;
 		float y;
@@ -107,6 +107,8 @@ typedef union VFour {
 		float b;
 		float a;
 	};
+
+	float e[4];
 } VFour;
 
 typedef union Vtwo {
@@ -335,12 +337,12 @@ typedef struct Arena {
 	size_t buf_size_byte;
 	unsigned char *buf;
 	size_t offset_byte;
-	size_t prev_offset_byte;
 } Arena;
 
-typedef struct ScratchArena {
+typedef struct ArenaMark {
 	Arena *arena;
-} ScratchArena;
+	size_t offset_byte;
+} ArenaMark;
 
 void arena_init(Arena *restrict arena, const size_t buf_size_byte, unsigned char *const restrict buf)
 {
@@ -373,19 +375,24 @@ void *arena_push_zero(Arena *arena, size_t size_byte)
 	return result;
 }
 
-void arena_reset(Arena *arena)
+void arena_clear(Arena *arena)
 {
 	arena->offset_byte = 0;
 }
 
-void arena_get_scratch(Arena *arena, ScratchArena *scratch)
+ArenaMark arena_get_mark(Arena *arena)
 {
-	scratch->arena = arena;
+	ArenaMark mark = {
+		.arena = arena,
+		.offset_byte = arena->offset_byte,
+	};
+
+	return mark;
 }
 
-void scratch_reset(ScratchArena *scratch)
+void arena_rewind_to_mark(ArenaMark *mark)
 {
-	scratch->arena->offset_byte = scratch->arena->prev_offset_byte;
+	mark->arena->offset_byte = mark->offset_byte;
 }
 
 // =============================================================================

@@ -20,6 +20,8 @@
 #define DWMWA_TEXT_COLOR 36
 #endif
 
+#define POINTS_PER_INCH 72
+
 #define BACKGROUND_COLOR_R 32
 #define BACKGROUND_COLOR_G 34
 #define BACKGROUND_COLOR_B 48
@@ -149,8 +151,6 @@ static uint32_t bitmap_copy_rect(unsigned char *src_buf, size_t src_width, size_
 /**
  * @brief Rasterizes a glyph, allocating its bitmap from the given arena.
  *
- * @param glyph_index The index of the glyph in the glyph atlas.
- * @param arena Arena used to allocate the resulting bitmap.
  * @return uint32_t 0 on success. Non-zero on failure, e.g. if the allocation fails.
  */
 static uint32_t glyph_rasterize(HDC font_dc, uint32_t code, Arena *arena, unsigned ascent_y_byte,
@@ -490,17 +490,36 @@ static unsigned long WINAPI render_run(void *param)
 		Line *file_lines = ARENA_PUSH_ARRAY(perm_arena, Line, max_lines);
 		size_t file_lines_count = 0;
 
+		// pt: physical unit - 1 point = 1/72 inch
+		int font_size_pt = 16;
+		int dpi_y = GetDeviceCaps(dc_handle, LOGPIXELSY);
+		int font_size_px = MulDiv(font_size_pt, dpi_y, POINTS_PER_INCH);
 		HDC font_dc = CreateCompatibleDC(nullptr);
-		HFONT font = CreateFontA(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0, ANSI_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
-		                         ANTIALIASED_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
+		HFONT font = CreateFontA(-font_size_px, 0, 0, 0, FW_NORMAL, 0, 0, 0, ANSI_CHARSET, OUT_TT_PRECIS,
+		                         CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
 		SelectObject(font_dc, font);
 		TEXTMETRICA text_metrics;
 		GetTextMetricsA(font_dc, &text_metrics);
 
-		unsigned tile_width_px = (unsigned)abs(text_metrics.tmAveCharWidth) + 7;
+		unsigned tile_width_px = (unsigned)abs(text_metrics.tmAveCharWidth);
 		unsigned tile_height_px = (unsigned)abs(text_metrics.tmHeight) + (unsigned)abs(text_metrics.tmExternalLeading);
 		unsigned tile_ascent_px = (unsigned)abs(text_metrics.tmAscent); // Includes the internal leading
+
+		SIZE size;
+		GetTextExtentPoint32W(dc_handle, L"@", 1, &size);
+		tile_width_px = (unsigned)max((long)tile_width_px, size.cx);
+		tile_height_px = (unsigned)max((long)tile_height_px, size.cy);
+
+		GetTextExtentPoint32W(dc_handle, L"M", 1, &size);
+		tile_width_px = (unsigned)max((long)tile_width_px, size.cx);
+		tile_height_px = (unsigned)max((long)tile_height_px, size.cy);
+
+		GetTextExtentPoint32W(dc_handle, L"g", 1, &size);
+		tile_width_px = (unsigned)max((long)tile_width_px, size.cx);
+		tile_height_px = (unsigned)max((long)tile_height_px, size.cy);
+
 		unsigned tile_size_byte = tile_width_px * tile_height_px;
+
 		size_t font_lifetime_arena_size_byte = MB_TO_BYTE(16ULL);
 		void *font_lifetime_arena_buf = arena_push(trans_arena, font_lifetime_arena_size_byte);
 		Arena font_arena;
@@ -514,7 +533,7 @@ static unsigned long WINAPI render_run(void *param)
 			glyph_atlas = arena_push_zero(&font_arena, glyph_atlas_size_byte);
 			if (glyph_atlas) {
 				for (char p = MIN_DIRECT_CODE_POINT; p <= MAX_DIRECT_CODE_POINT; ++p) {
-					GlyphIndex glyph_idx = { .value = (uint32_t)p - MIN_DIRECT_CODE_POINT };
+					GlyphIdx glyph_idx = { .value = (uint32_t)p - MIN_DIRECT_CODE_POINT };
 					glyph_rasterize(font_dc, (uint32_t)p, trans_arena, tile_ascent_px,
 					                glyph_atlas + (size_t)(glyph_idx.value * tile_size_byte), tile_width_px,
 					                tile_height_px, tile_width_px);
@@ -522,7 +541,7 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		}
 
-		arena_reset(trans_arena);
+		arena_clear(trans_arena);
 
 		LARGE_INTEGER performance_frequency;
 		QueryPerformanceFrequency(&performance_frequency);
@@ -748,7 +767,7 @@ static unsigned long WINAPI render_run(void *param)
 					unsigned tile_min_y_px = tile_height_px * tile_row;
 
 					char *p = (char *)file.buf + file_lines[line_idx].start_idx;
-					GlyphIndex glyph_idx = {};
+					GlyphIdx glyph_idx = {};
 					unsigned char *glyph_buf = nullptr;
 					while (p < (char *)file.buf + file_lines[line_idx].newline_idx && tile_col < grid_width_tile) {
 						unsigned tile_min_x_px = tile_col * tile_width_px;
@@ -772,6 +791,8 @@ static unsigned long WINAPI render_run(void *param)
 									uint8_t blend_factor = (*coverage_ptr * 255U) / 64U;
 
 									// x/255 ~ x/256 + x/256² = (x + x/256) / 256
+
+									// NOTE(fredy): out_color = bg + coverage * (fg - bg)
 
 									// blue
 									uint32_t blended = 0x00U * blend_factor + *dst_px_ptr * (255 - blend_factor);
@@ -836,6 +857,7 @@ static unsigned long WINAPI render_run(void *param)
 
 			SetWindowTextA(window, window_title);
 
+			// TODO(fredy): Get the swap chain's back buffer (IDXGISwapChain::GetBuffer), and copy backbuf.buf into it.
 			bitmap_info.bmiHeader.biWidth = (long)backbuf.width_px;
 			bitmap_info.bmiHeader.biHeight = -(long)backbuf.height_px;
 			SetDIBitsToDevice(dc_handle, 0, 0, backbuf.width_px, backbuf.height_px, 0, 0, 0, backbuf.height_px,

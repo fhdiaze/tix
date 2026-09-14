@@ -12,7 +12,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 Goal: own the pixel buffer and present it ourselves, replacing the `TextOutA`
 spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 
-- [x] **Allocate the backbuffer once, at a generous size.** `VirtualAlloc` a
+- [ ] **Allocate the backbuffer once, at a generous size.** `VirtualAlloc` a
       32bpp BGRA, top-down block sized to an upper bound (primary monitor or
       virtual-desktop resolution), not the current client area. Fill in the
       existing `WinBitmap` struct (`top_left_px`, `pitch_bytes = width * 4`,
@@ -37,7 +37,7 @@ spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 
 ## Stage 1 — File → lines → cell grid
 
-- [ ] Line index: scan for line breaks, store start/end offset per line.
+- [x] Line index: scan for line breaks, store start/end offset per line.
 - [ ] Define the `cell` struct (codepoint, fg, bg, flags).
 - [ ] Allocate the cell grid sized in columns/rows (not pixels).
 - [x] Layout pass: fill visible lines into the grid.
@@ -45,7 +45,7 @@ spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 
 ## Stage 2 — Glyph atlas + real text
 
-- [ ] Rasterize each unique codepoint once via `IDWriteBitmapRenderTarget`
+- [x] Rasterize each unique codepoint once via `IDWriteBitmapRenderTarget`
       into a fixed-size tile in one CPU-side atlas.
 - [ ] Store tiles as 8-bit coverage only (discard DirectWrite color).
 - [ ] Codepoint → tile lookup.
