@@ -439,8 +439,7 @@ static unsigned long WINAPI render_run(void *param)
 		};
 
 		Storage storage = {
-			.perm_size_byte = MB_TO_BYTE(128ULL),
-			.trans_size_byte = GB_TO_BYTE(1ULL),
+			.buf_size_byte = MB_TO_BYTE(128ULL) + GB_TO_BYTE(1ULL),
 		};
 
 		Bitmap backbuf = {
@@ -453,42 +452,28 @@ static unsigned long WINAPI render_run(void *param)
 									   .biCompression = BI_RGB,
 								   } };
 
-		assert(IS_POWER_OF_TWO(storage.perm_size_byte));
-		assert(IS_POWER_OF_TWO(storage.trans_size_byte));
-
-		win_state.buf_size_byte = storage.perm_size_byte + storage.trans_size_byte;
+		win_state.buf_size_byte = storage.buf_size_byte;
 		win_state.buf =
 			// NOLINTNEXTLINE(performance-no-int-to-ptr): fixed base address for deterministic pointers across runs
 			VirtualAlloc(MEMORY_BASE_ADDRESS, win_state.buf_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 		if (win_state.buf) {
-			storage.perm_buf = (unsigned char *)win_state.buf;
-			storage.trans_buf = (unsigned char *)storage.perm_buf + storage.perm_size_byte;
+			storage.buf = (unsigned char *)win_state.buf;
 		}
 
-		Tix *tix = (Tix *)storage.perm_buf;
-		Arena *perm_arena = &tix->perm_arena;
-		Arena *trans_arena = &tix->trans_arena;
+		Tix *tix = (Tix *)storage.buf;
+		tix->caret_mode = CARET_MODE_NORMAL;
+		tix->caret_pos.row = 0;
+		tix->caret_pos.column = 0;
+
+		Arena *arena = &tix->arena;
 
 		if (!storage.is_initialized) {
-			arena_init(perm_arena, storage.perm_size_byte - sizeof(Tix),
-			           (unsigned char *)storage.perm_buf + sizeof(Tix));
+			arena_init(arena, storage.buf_size_byte - sizeof(Tix), (unsigned char *)storage.buf + sizeof(Tix));
 
-			arena_init(trans_arena, storage.trans_size_byte, storage.trans_buf);
-
-			assert(trans_arena->buf);
-			assert(perm_arena->buf);
+			assert(arena->buf);
 
 			storage.is_initialized = 1U;
 		}
-
-		const char *file_path = "./test.txt";
-
-		ReadFileResult file = {};
-		FILETIME file_previous_write_time = {};
-
-		constexpr uint32_t max_lines = 1000;
-		Line *file_lines = ARENA_PUSH_ARRAY(perm_arena, Line, max_lines);
-		size_t file_lines_count = 0;
 
 		// pt: physical unit - 1 point = 1/72 inch
 		int font_size_pt = 16;
@@ -520,12 +505,15 @@ static unsigned long WINAPI render_run(void *param)
 
 		unsigned tile_size_byte = tile_width_px * tile_height_px;
 
-		size_t font_lifetime_arena_size_byte = MB_TO_BYTE(16ULL);
-		void *font_lifetime_arena_buf = arena_push(trans_arena, font_lifetime_arena_size_byte);
+		// TODO(fredy): what is the correct size for this?
+		size_t font_arena_size_byte = MB_TO_BYTE(16ULL);
+		void *font_arena_buf = arena_push(arena, font_arena_size_byte);
 		Arena font_arena;
-		if (font_lifetime_arena_buf) {
-			arena_init(&font_arena, font_lifetime_arena_size_byte, font_lifetime_arena_buf);
+		if (font_arena_buf) {
+			arena_init(&font_arena, font_arena_size_byte, font_arena_buf);
 		}
+
+		ArenaMark init_mark = arena_mark(arena);
 
 		unsigned char *glyph_atlas = nullptr;
 		size_t glyph_atlas_size_byte = (size_t)DIRECT_CODE_POINTS_COUNT * tile_width_px * tile_height_px;
@@ -534,14 +522,23 @@ static unsigned long WINAPI render_run(void *param)
 			if (glyph_atlas) {
 				for (char p = MIN_DIRECT_CODE_POINT; p <= MAX_DIRECT_CODE_POINT; ++p) {
 					GlyphIdx glyph_idx = { .value = (uint32_t)p - MIN_DIRECT_CODE_POINT };
-					glyph_rasterize(font_dc, (uint32_t)p, trans_arena, tile_ascent_px,
+					glyph_rasterize(font_dc, (uint32_t)p, arena, tile_ascent_px,
 					                glyph_atlas + (size_t)(glyph_idx.value * tile_size_byte), tile_width_px,
 					                tile_height_px, tile_width_px);
 				}
 			}
 		}
 
-		arena_clear(trans_arena);
+		arena_rewind(&init_mark);
+
+		const char *file_path = "./test.txt";
+
+		ReadFileResult file = {};
+		FILETIME file_previous_write_time = {};
+
+		constexpr uint32_t max_lines = 1000000;
+		Line *file_lines = ARENA_PUSH_ARRAY(arena, Line, max_lines);
+		size_t file_lines_count = 0;
 
 		LARGE_INTEGER performance_frequency;
 		QueryPerformanceFrequency(&performance_frequency);
@@ -774,8 +771,6 @@ static unsigned long WINAPI render_run(void *param)
 
 						if (*p >= MIN_DIRECT_CODE_POINT && *p <= MAX_DIRECT_CODE_POINT) {
 							glyph_idx.value = (unsigned char)*p - MIN_DIRECT_CODE_POINT;
-							// glyph_idx.value = 'a' - MIN_DIRECT_CODE_POINT;
-
 							glyph_buf = glyph_atlas + (size_t)glyph_idx.value * tile_size_byte;
 
 							// TODO(fredy): what happen with width 1.5F?
@@ -786,6 +781,7 @@ static unsigned long WINAPI render_run(void *param)
 							                      backbuf_pitch_size_byte * tile_min_y_px;
 							unsigned char *coverage_ptr = glyph_buf;
 
+							// TODO(fredy): should I use SIMD here?
 							for (size_t y = 0; y < tile_height_px; ++y) {
 								for (size_t x = 0; x < tile_width_px; ++x) {
 									uint8_t blend_factor = (*coverage_ptr * 255U) / 64U;
@@ -919,6 +915,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		    msg.message == WM_MOUSEWHEEL) {
 			PostThreadMessageA(g_render_thread_id, msg.message, msg.wParam, msg.lParam);
 		} else {
+			// Sends the msg to WinProc
 			DispatchMessageA(&msg);
 		}
 	}

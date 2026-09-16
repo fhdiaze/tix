@@ -45,11 +45,12 @@ typedef enum ContextMode : uint8_t {
 	CONTEXT_MODE_FILE,
 } ContextMode;
 
-typedef enum CursorMode : uint8_t {
-	CURSOR_MODE_NORMAL,
-	CURSOR_MODE_VIEW,
-	CURSOR_MODE_INSERT,
-} CursorMode;
+typedef enum CaretMode : uint8_t {
+	CARET_MODE_NORMAL,
+	CARET_MODE_VIEW,
+	CARET_MODE_INSERT,
+	CARET_MODE_BLOCK,
+} CaretMode;
 
 typedef struct GlyphIdx {
 	uint32_t value;
@@ -70,24 +71,25 @@ typedef struct Line {
 } Line;
 
 typedef struct Storage {
-	size_t perm_size_byte;
-	void *perm_buf;
-
-	size_t trans_size_byte;
-	void *trans_buf;
+	size_t buf_size_byte;
+	void *buf;
 
 	uint8_t is_initialized;
 } Storage;
 
+typedef struct CaretPos {
+	uint32_t row;
+	uint32_t column;
+} CaretPos;
+
 typedef struct Tix {
+	Arena arena;
 	Arena perm_arena;
-	Arena trans_arena;
 
 	size_t scroll_offset;
 	size_t lines_count;
 
-	size_t caret_line;
-	size_t caret_column;
+	CaretPos caret_pos;
 
 	Tile *tiles;
 	uint32_t width_tile;
@@ -97,7 +99,7 @@ typedef struct Tix {
 	size_t atlas_buf_size_byte;
 
 	ContextMode context_mode;
-	CursorMode cursor_mode;
+	CaretMode caret_mode;
 
 	char context_path[MAX_FILE_PATH];
 } Tix;

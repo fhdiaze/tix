@@ -38,8 +38,9 @@ spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 ## Stage 1 — File → lines → cell grid
 
 - [x] Line index: scan for line breaks, store start/end offset per line.
-- [ ] Define the `cell` struct (codepoint, fg, bg, flags).
-- [ ] Allocate the cell grid sized in columns/rows (not pixels).
+- [ ] Memory allocation strategy: perm (Tix, ), font(atlas, tiles, scratch), files, scratch
+- [ ] Define the `tile` struct (glyph_idx, fg, bg, flags).
+- [ ] Allocate the tile grid sized in columns/rows (not pixels).
 - [x] Layout pass: fill visible lines into the grid.
 - [x] Render one solid bg-colored rectangle per cell (no glyphs yet).
 
@@ -86,7 +87,3 @@ spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 
 - [ ] `render_process_messages`: bound the `PeekMessage` loop
       (`TODO(fredy)` in `sys_win.c`).
-- [ ] `WM_SIZE` is posted to the render thread from both `window_procedure`
-      and the `WinMain` message loop — de-duplicate.
-- [ ] Review the `scroll_offset` clamp in the `WM_MOUSEWHEEL` handler; the
-      `min(...)` currently compares against a boolean expression.

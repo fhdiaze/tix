@@ -380,7 +380,7 @@ void arena_clear(Arena *arena)
 	arena->offset_byte = 0;
 }
 
-ArenaMark arena_get_mark(Arena *arena)
+ArenaMark arena_mark(Arena *arena)
 {
 	ArenaMark mark = {
 		.arena = arena,
@@ -390,7 +390,7 @@ ArenaMark arena_get_mark(Arena *arena)
 	return mark;
 }
 
-void arena_rewind_to_mark(ArenaMark *mark)
+void arena_rewind(ArenaMark *mark)
 {
 	mark->arena->offset_byte = mark->offset_byte;
 }
