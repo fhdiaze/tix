@@ -22,9 +22,21 @@
 
 #define POINTS_PER_INCH 72
 
-#define BACKGROUND_COLOR_R 32
-#define BACKGROUND_COLOR_G 34
-#define BACKGROUND_COLOR_B 48
+#define BG_COLOR 0x00202230U
+#define FG_COLOR 0x00FFFF00U
+#define ALPHA_MASK 0xFF000000U
+#define RED_MASK 0x00FF0000U
+#define GREEN_MASK 0x0000FF00U
+#define BLUE_MASK 0x000000FFU
+#define ALPHA_SHIFT 24U
+#define RED_SHIFT 16U
+#define GREEN_SHIFT 8U
+#define BLUE_SHIFT 0U
+
+#define ALPHA_BITS(c) ((c & ALPHA_MASK) >> ALPHA_SHIFT)
+#define RED_BITS(c) ((c & RED_MASK) >> RED_SHIFT)
+#define GREEN_BITS(c) ((c & GREEN_MASK) >> GREEN_SHIFT)
+#define BLUE_BITS(c) ((c & BLUE_MASK) >> BLUE_SHIFT)
 
 /**
  * @brief (0,0) is on the top left corner. Top-To-Bottom.
@@ -439,7 +451,7 @@ static unsigned long WINAPI render_run(void *param)
 		};
 
 		Storage storage = {
-			.buf_size_byte = MB_TO_BYTE(128ULL) + GB_TO_BYTE(1ULL),
+			.buf_size_byte = MB_TO_BYTE(128ULL),
 		};
 
 		Bitmap backbuf = {
@@ -463,7 +475,7 @@ static unsigned long WINAPI render_run(void *param)
 		Tix *tix = (Tix *)storage.buf;
 		tix->caret_mode = CARET_MODE_NORMAL;
 		tix->caret_pos.row = 0;
-		tix->caret_pos.column = 0;
+		tix->caret_pos.col = 0;
 
 		Arena *arena = &tix->arena;
 
@@ -543,6 +555,8 @@ static unsigned long WINAPI render_run(void *param)
 		LARGE_INTEGER performance_frequency;
 		QueryPerformanceFrequency(&performance_frequency);
 
+		TixInput tix_input = {};
+
 		while (win_state.is_running) {
 			LARGE_INTEGER wall_clock_at_start;
 			QueryPerformanceCounter(&wall_clock_at_start);
@@ -557,6 +571,11 @@ static unsigned long WINAPI render_run(void *param)
 			// TODO(fredy): limit the iterations of this loop
 			// TODO(fredy): deal with WM_DPICHANGED and WM_GETDPISCALEDSIZE
 			while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+				uint32_t vk_code = (uint32_t)msg.wParam;
+
+				uint32_t was_down = ((uint32_t)msg.lParam & (1U << 30U)) != 0;
+				uint32_t is_down = ((uint32_t)msg.lParam & (1U << 31U)) == 0;
+
 				switch (msg.message) {
 				case WM_QUIT: {
 					// The WM_QUIT message is not associated with a window and therefore will never be received through a
@@ -568,9 +587,19 @@ static unsigned long WINAPI render_run(void *param)
 					// A "notch" refers to one discrete click/detent of a physical mouse wheel
 					notches += delta / WHEEL_DELTA;
 				} break;
+				case WM_SYSKEYDOWN:
+				case WM_SYSKEYUP:
 				case WM_KEYDOWN:
+				case WM_KEYUP: {
+					LOG_TRACE("A key action was received");
+				} break;
 				case WM_CHAR: {
 					LOG_TRACE("A char arrived");
+					if (was_down != is_down) {
+						if (vk_code == 'j') {
+							tix_input.move_down.ended_down = 1U;
+						}
+					}
 				} break;
 				case WM_SIZE: {
 					// No-op while the loop spins on PeekMessage; it only wakes the thread once the spin is
@@ -748,8 +777,8 @@ static unsigned long WINAPI render_run(void *param)
 				// Layout
 				// =============================================================================
 				bitmap_draw_rectangle(&backbuf, 0.0F, 0.0F, (float)backbuf.width_px, (float)backbuf.height_px,
-				                      BACKGROUND_COLOR_R / 255.0F, BACKGROUND_COLOR_G / 255.0F,
-				                      BACKGROUND_COLOR_B / 255.0F);
+				                      RED_BITS(BG_COLOR) / 255.0F, GREEN_BITS(BG_COLOR) / 255.0F,
+				                      BLUE_BITS(BG_COLOR) / 255.0F);
 
 				unsigned tile_row = 0;
 				for (size_t line_idx = tix->scroll_offset; line_idx < file_lines_count && tile_row < grid_height_tile;
@@ -769,6 +798,10 @@ static unsigned long WINAPI render_run(void *param)
 					while (p < (char *)file.buf + file_lines[line_idx].newline_idx && tile_col < grid_width_tile) {
 						unsigned tile_min_x_px = tile_col * tile_width_px;
 
+						if (tile_col == tix->caret_pos.col && tile_row == tix->caret_pos.row) {
+						} else {
+						}
+
 						if (*p >= MIN_DIRECT_CODE_POINT && *p <= MAX_DIRECT_CODE_POINT) {
 							glyph_idx.value = (unsigned char)*p - MIN_DIRECT_CODE_POINT;
 							glyph_buf = glyph_atlas + (size_t)glyph_idx.value * tile_size_byte;
@@ -784,25 +817,24 @@ static unsigned long WINAPI render_run(void *param)
 							// TODO(fredy): should I use SIMD here?
 							for (size_t y = 0; y < tile_height_px; ++y) {
 								for (size_t x = 0; x < tile_width_px; ++x) {
-									uint8_t blend_factor = (*coverage_ptr * 255U) / 64U;
-
-									// x/255 ~ x/256 + x/256² = (x + x/256) / 256
-
-									// NOTE(fredy): out_color = bg + coverage * (fg - bg)
+									float blend_factor = (float)(*coverage_ptr) / 64.0F;
 
 									// blue
-									uint32_t blended = 0x00U * blend_factor + *dst_px_ptr * (255 - blend_factor);
-									*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+									float blended = (float)BLUE_BITS(FG_COLOR) * blend_factor +
+									                (float)BLUE_BITS(BG_COLOR) * (1.0F - blend_factor);
+									*dst_px_ptr = (uint8_t)(blended + 0.5F);
 
 									// green
 									++dst_px_ptr;
-									blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
-									*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+									blended = (float)GREEN_BITS(FG_COLOR) * blend_factor +
+									          (float)GREEN_BITS(BG_COLOR) * (1.0F - blend_factor);
+									*dst_px_ptr = (uint8_t)(blended + 0.5F);
 
 									// red
 									++dst_px_ptr;
-									blended = 0xFFU * blend_factor + *dst_px_ptr * (255 - blend_factor);
-									*dst_px_ptr = (uint8_t)((blended + 1U + (blended >> 8U)) >> 8U);
+									blended = (float)RED_BITS(FG_COLOR) * blend_factor +
+									          (float)RED_BITS(BG_COLOR) * (1.0F - blend_factor);
+									*dst_px_ptr = (uint8_t)(blended + 0.5F);
 
 									// alpha
 									++dst_px_ptr;

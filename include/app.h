@@ -79,7 +79,7 @@ typedef struct Storage {
 
 typedef struct CaretPos {
 	uint32_t row;
-	uint32_t column;
+	uint32_t col;
 } CaretPos;
 
 typedef struct Tix {
