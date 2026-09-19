@@ -13,11 +13,28 @@
 #define MEMORY_BASE_ADDRESS (nullptr)
 #endif // MEMORY_BASE_ADDRESS
 
+#define MAX_KEY_STACK 256
 #define MAX_FILE_PATH 4096
-#define MAX_KEYBOARD_KEYS 256
 #define MIN_DIRECT_CODE_POINT 32
 #define MAX_DIRECT_CODE_POINT 126
 #define DIRECT_CODE_POINTS_COUNT (MAX_DIRECT_CODE_POINT - MIN_DIRECT_CODE_POINT + 1)
+
+typedef enum KEY : uint8_t {
+	KEY_SHIFT,
+	KEY_CAPS,
+	KEY_L_CTRL,
+	KEY_R_CTRL,
+
+	KEY_G,
+	KEY_J,
+	KEY_K,
+	KEY_L,
+	KEY_H,
+
+	KEY_USCORE,
+
+	KEY_COUNT,
+} KEY;
 
 typedef struct KeyState {
 	// Half transition count per frame
@@ -26,10 +43,15 @@ typedef struct KeyState {
 } KeyState;
 
 typedef struct TixInput {
-	float place_holder;
+	unsigned mouse_x;
+	unsigned mouse_y;
+	signed mouse_notches;
+
+	KEY key_stack[MAX_KEY_STACK];
+	KeyState key_states[KEY_COUNT];
 
 	union {
-		KeyState keys[MAX_KEYBOARD_KEYS];
+		KeyState keys[KEY_COUNT];
 		struct {
 			KeyState move_up;
 			KeyState move_down;
