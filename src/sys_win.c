@@ -558,6 +558,8 @@ static unsigned long WINAPI render_run(void *param)
 		TixInput tix_input = {};
 
 		while (win_state.is_running) {
+			tix_input = (TixInput){};
+
 			LARGE_INTEGER wall_clock_at_start;
 			QueryPerformanceCounter(&wall_clock_at_start);
 
@@ -598,6 +600,12 @@ static unsigned long WINAPI render_run(void *param)
 					if (was_down != is_down) {
 						if (vk_code == 'j') {
 							tix_input.move_down.ended_down = 1U;
+						} else if (vk_code == 'k') {
+							tix_input.move_up.ended_down = 1U;
+						} else if (vk_code == 'h') {
+							tix_input.move_left.ended_down = 1U;
+						} else if (vk_code == 'l') {
+							tix_input.move_right.ended_down = 1U;
 						}
 					}
 				} break;
@@ -769,6 +777,38 @@ static unsigned long WINAPI render_run(void *param)
 
 				tix->scroll_offset = (size_t)new_scroll_offset;
 
+				if (tix_input.move_up.ended_down && tix->caret_pos.row > 0) {
+					--tix->caret_pos.row;
+				}
+
+				if (tix_input.move_down.ended_down && tix->caret_pos.row + 1 < file_lines_count) {
+					++tix->caret_pos.row;
+				}
+
+				size_t new_line_col =
+					file_lines[tix->caret_pos.row].newline_idx - file_lines[tix->caret_pos.row].start_idx;
+				if (new_line_col > 0 &&
+				    *((unsigned char *)file.buf + file_lines[tix->caret_pos.row].newline_idx - 1) == '\r') {
+					--new_line_col;
+				}
+
+				if (tix_input.move_left.ended_down && tix->caret_pos.col > 0) {
+					--tix->caret_pos.col;
+				}
+
+				if (tix_input.move_right.ended_down && tix->caret_pos.col + 1 < new_line_col) {
+					++tix->caret_pos.col;
+				}
+
+				size_t caret_col = tix->caret_pos.col;
+				if (caret_col >= new_line_col) {
+					if (new_line_col > 0) {
+						caret_col = new_line_col - 1;
+					} else {
+						caret_col = new_line_col;
+					}
+				}
+
 				// =============================================================================
 				// Segmentation
 				// =============================================================================
@@ -779,7 +819,6 @@ static unsigned long WINAPI render_run(void *param)
 				bitmap_draw_rectangle(&backbuf, 0.0F, 0.0F, (float)backbuf.width_px, (float)backbuf.height_px,
 				                      RED_BITS(BG_COLOR) / 255.0F, GREEN_BITS(BG_COLOR) / 255.0F,
 				                      BLUE_BITS(BG_COLOR) / 255.0F);
-
 				unsigned tile_row = 0;
 				for (size_t line_idx = tix->scroll_offset; line_idx < file_lines_count && tile_row < grid_height_tile;
 				     ++line_idx) {
@@ -791,19 +830,29 @@ static unsigned long WINAPI render_run(void *param)
 
 					unsigned tile_col = 0;
 					unsigned tile_min_y_px = tile_height_px * tile_row;
-
 					char *p = (char *)file.buf + file_lines[line_idx].start_idx;
 					GlyphIdx glyph_idx = {};
 					unsigned char *glyph_buf = nullptr;
-					while (p < (char *)file.buf + file_lines[line_idx].newline_idx && tile_col < grid_width_tile) {
+					uint32_t bg_color = BG_COLOR;
+					uint32_t fg_color = FG_COLOR;
+					while (p <= (char *)file.buf + file_lines[line_idx].newline_idx && tile_col < grid_width_tile) {
 						unsigned tile_min_x_px = tile_col * tile_width_px;
+						char c = *p;
 
-						if (tile_col == tix->caret_pos.col && tile_row == tix->caret_pos.row) {
+						if (tile_col == caret_col && line_idx == tix->caret_pos.row) {
+							fg_color = BG_COLOR;
+							bg_color = FG_COLOR;
+
+							if (c == '\r' || c == '\n') {
+								c = ' ';
+							}
 						} else {
+							fg_color = FG_COLOR;
+							bg_color = BG_COLOR;
 						}
 
-						if (*p >= MIN_DIRECT_CODE_POINT && *p <= MAX_DIRECT_CODE_POINT) {
-							glyph_idx.value = (unsigned char)*p - MIN_DIRECT_CODE_POINT;
+						if (c >= MIN_DIRECT_CODE_POINT && c <= MAX_DIRECT_CODE_POINT) {
+							glyph_idx.value = (unsigned char)c - MIN_DIRECT_CODE_POINT;
 							glyph_buf = glyph_atlas + (size_t)glyph_idx.value * tile_size_byte;
 
 							// TODO(fredy): what happen with width 1.5F?
@@ -820,20 +869,20 @@ static unsigned long WINAPI render_run(void *param)
 									float blend_factor = (float)(*coverage_ptr) / 64.0F;
 
 									// blue
-									float blended = (float)BLUE_BITS(FG_COLOR) * blend_factor +
-									                (float)BLUE_BITS(BG_COLOR) * (1.0F - blend_factor);
+									float blended = (float)BLUE_BITS(fg_color) * blend_factor +
+									                (float)BLUE_BITS(bg_color) * (1.0F - blend_factor);
 									*dst_px_ptr = (uint8_t)(blended + 0.5F);
 
 									// green
 									++dst_px_ptr;
-									blended = (float)GREEN_BITS(FG_COLOR) * blend_factor +
-									          (float)GREEN_BITS(BG_COLOR) * (1.0F - blend_factor);
+									blended = (float)GREEN_BITS(fg_color) * blend_factor +
+									          (float)GREEN_BITS(bg_color) * (1.0F - blend_factor);
 									*dst_px_ptr = (uint8_t)(blended + 0.5F);
 
 									// red
 									++dst_px_ptr;
-									blended = (float)RED_BITS(FG_COLOR) * blend_factor +
-									          (float)RED_BITS(BG_COLOR) * (1.0F - blend_factor);
+									blended = (float)RED_BITS(fg_color) * blend_factor +
+									          (float)RED_BITS(bg_color) * (1.0F - blend_factor);
 									*dst_px_ptr = (uint8_t)(blended + 0.5F);
 
 									// alpha
