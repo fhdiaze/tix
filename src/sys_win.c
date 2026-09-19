@@ -809,6 +809,14 @@ static unsigned long WINAPI render_run(void *param)
 					}
 				}
 
+				if (tix->caret_pos.row < tix->scroll_offset) {
+					tix->scroll_offset = tix->caret_pos.row;
+				}
+
+				if (tix->caret_pos.row >= tix->scroll_offset + grid_height_tile) {
+					tix->scroll_offset += tix->scroll_offset + grid_height_tile - tix->caret_pos.row + 1;
+				}
+
 				// =============================================================================
 				// Segmentation
 				// =============================================================================

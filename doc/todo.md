@@ -48,13 +48,13 @@ spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 
 - [x] Rasterize each unique codepoint once via `IDWriteBitmapRenderTarget`
       into a fixed-size tile in one CPU-side atlas.
-- [ ] Store tiles as 8-bit coverage only (discard DirectWrite color).
+- [x] Store tiles as 8-bit coverage only (discard DirectWrite color).
 - [ ] Codepoint → tile lookup.
-- [ ] CPU compositing: per cell, blend bg→fg by coverage into the backbuffer.
+- [x] CPU compositing: per cell, blend bg→fg by coverage into the backbuffer.
 
 ## Stage 3 — Editor features (cell-grid only)
 
-- [ ] Cursor (flag on a cell + blink timer).
+- [x] Cursor (flag on a cell + blink timer).
 - [ ] Selection highlight (per-cell flag/color override).
 - [ ] Scrolling / line wrapping via a viewing offset into the line array.
 - [ ] Syntax highlighting (tokenizer sets each cell's fg).
