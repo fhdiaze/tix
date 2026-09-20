@@ -54,6 +54,7 @@ spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 
 ## Stage 3 — Editor features (cell-grid only)
 
+- [ ] Ensure a fixed frame rate base on the monitor refresh rate? is this a good idea?
 - [x] Cursor (flag on a cell + blink timer).
 - [ ] Selection highlight (per-cell flag/color override).
 - [ ] Scrolling / line wrapping via a viewing offset into the line array.

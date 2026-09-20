@@ -43,8 +43,14 @@ typedef struct KeyState {
 } KeyState;
 
 typedef struct TixInput {
+	float time_delta_s;
+
 	unsigned mouse_x;
 	unsigned mouse_y;
+
+	/**
+	 * @brief A "notch" refers to one discrete click/detent of a physical mouse wheel
+	 */
 	signed mouse_notches;
 
 	KEY key_stack[MAX_KEY_STACK];

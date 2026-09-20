@@ -20,6 +20,7 @@
 #define DWMWA_TEXT_COLOR 36
 #endif
 
+#define LINES_PER_NOTCH 3
 #define POINTS_PER_INCH 72
 
 #define BG_COLOR 0x00202230U
@@ -336,14 +337,6 @@ static void bitmap_draw_rectangle(Bitmap *bitmap, float min_x_px_f, float min_y_
 	}
 }
 
-inline static void keyboard_process_message(KeyState *key_state, uint32_t is_down)
-{
-	if (key_state->ended_down != is_down) {
-		key_state->ended_down = (uint8_t)is_down;
-		++key_state->half_transition_count;
-	}
-}
-
 /**
  * @brief Handles window lifecycle events
  *
@@ -363,6 +356,10 @@ static LRESULT CALLBACK window_procedure(HWND win_handle, [[__maybe_unused__]] U
 	case WM_DESTROY: {
 		PostQuitMessage(0);
 	} break;
+	case WM_SYSKEYDOWN:
+	case WM_SYSKEYUP:
+	case WM_KEYDOWN:
+	case WM_KEYUP:
 	case WM_CHAR:
 	case WM_SIZE: {
 		PostThreadMessageA(g_render_thread_id, msg, wparam, lparam);
@@ -438,6 +435,14 @@ static ReadFileResult sys_file_read(const char *const path)
 	}
 
 	return result;
+}
+
+inline static void keyboard_process_message(KeyState *key_state, uint32_t is_down)
+{
+	if (key_state->ended_down != is_down) {
+		key_state->ended_down = (uint8_t)is_down;
+		++key_state->half_transition_count;
+	}
 }
 
 static unsigned long WINAPI render_run(void *param)
@@ -558,26 +563,19 @@ static unsigned long WINAPI render_run(void *param)
 		TixInput tix_input = {};
 
 		while (win_state.is_running) {
-			tix_input = (TixInput){};
-
 			LARGE_INTEGER wall_clock_at_start;
 			QueryPerformanceCounter(&wall_clock_at_start);
 
 			// =============================================================================
 			// Input
 			// =============================================================================
-			int notches = 0;
+			tix_input.mouse_notches = 0;
 
 			// Process POSTED messages
 			MSG msg;
 			// TODO(fredy): limit the iterations of this loop
 			// TODO(fredy): deal with WM_DPICHANGED and WM_GETDPISCALEDSIZE
 			while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
-				uint32_t vk_code = (uint32_t)msg.wParam;
-
-				uint32_t was_down = ((uint32_t)msg.lParam & (1U << 30U)) != 0;
-				uint32_t is_down = ((uint32_t)msg.lParam & (1U << 31U)) == 0;
-
 				switch (msg.message) {
 				case WM_QUIT: {
 					// The WM_QUIT message is not associated with a window and therefore will never be received through a
@@ -586,32 +584,42 @@ static unsigned long WINAPI render_run(void *param)
 				} break;
 				case WM_MOUSEWHEEL: {
 					int delta = GET_WHEEL_DELTA_WPARAM(msg.wParam);
-					// A "notch" refers to one discrete click/detent of a physical mouse wheel
-					notches += delta / WHEEL_DELTA;
+					tix_input.mouse_notches += delta / WHEEL_DELTA;
 				} break;
 				case WM_SYSKEYDOWN:
 				case WM_SYSKEYUP:
 				case WM_KEYDOWN:
 				case WM_KEYUP: {
-					LOG_TRACE("A key action was received");
-				} break;
-				case WM_CHAR: {
-					LOG_TRACE("A char arrived");
+					size_t vk_code = (size_t)msg.wParam;
+					size_t key_stroke_info = (size_t)msg.lParam;
+					uint32_t was_down = (key_stroke_info & (1U << 30U)) != 0;
+					uint32_t is_down = (key_stroke_info & (1UL << 31UL)) == 0;
 					if (was_down != is_down) {
-						if (vk_code == 'j') {
-							tix_input.move_down.ended_down = 1U;
-						} else if (vk_code == 'k') {
-							tix_input.move_up.ended_down = 1U;
-						} else if (vk_code == 'h') {
-							tix_input.move_left.ended_down = 1U;
-						} else if (vk_code == 'l') {
-							tix_input.move_right.ended_down = 1U;
+						if (vk_code == 'J') {
+							keyboard_process_message(&tix_input.move_down, is_down);
+						} else if (vk_code == 'K') {
+							keyboard_process_message(&tix_input.move_up, is_down);
+						} else if (vk_code == 'H') {
+							keyboard_process_message(&tix_input.move_left, is_down);
+						} else if (vk_code == 'L') {
+							keyboard_process_message(&tix_input.move_right, is_down);
 						}
 					}
 				} break;
+				case WM_CHAR: {
+					(void)0;
+				} break;
 				case WM_SIZE: {
-					// No-op while the loop spins on PeekMessage; it only wakes the thread once the spin is
-					// replaced by a blocking wait (GetMessage / MsgWaitForMultipleObjectsEx)
+					// Why do we send this msg from the window thread if we are not doing anything?
+					// Ans: this is a wake up signal. It is not useful while the render loop spins
+					// on PeekMessage; it only wakes the render thread once the spin is replaced by
+					// a blocking wait (GetMessage / MsgWaitForMultipleObjectsEx)
+
+					// Event-driven file watch: use ReadDirectoryChangesW (overlapped, with an event HANDLE)
+					// or FindFirstChangeNotificationA on the file's directory, and add that handle to the
+					// array passed to MsgWaitForMultipleObjectsEx. Then the thread only wakes for an actual
+					// change — no polling at all, but more plumbing (need to re-arm the watch after each
+					// notification, handle the directory vs. file distinction, etc.)
 				} break;
 				default: {
 					assert(false && "unexpected message arrived to the render thread");
@@ -694,95 +702,87 @@ static unsigned long WINAPI render_run(void *param)
 					file_lines_count = 0;
 
 					// TODO(fredy): should it be a circular buffer?
-					if (file.buf) {
-						static uint8_t overhang_mask[64] = {
-							255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-							255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-							0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-							0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-						};
-						char *buf = (char *)file.buf;
-						size_t remaining_byte_count = file.size_byte;
+					static uint8_t overhang_mask[64] = {
+						255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+						255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+						0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+						0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+					};
+					char *buf = (char *)file.buf;
+					size_t remaining_byte_count = file.size_byte;
 
-						__m256i newline_needle = _mm256_set1_epi8('\n');
-						__m256i complex_mask = _mm256_set1_epi8((char)0x80);
-						size_t line_start_idx = 0;
-						size_t last_byte_idx = 0;
+					__m256i newline_needle = _mm256_set1_epi8('\n');
+					__m256i complex_mask = _mm256_set1_epi8((char)0x80);
+					size_t line_start_idx = 0;
+					size_t last_byte_idx = 0;
 
-						while (file_lines_count < max_lines && remaining_byte_count) {
-							__m256i contains_complex = _mm256_setzero_si256();
+					while (file_lines_count < max_lines && remaining_byte_count) {
+						__m256i contains_complex = _mm256_setzero_si256();
 
-							while (remaining_byte_count > 32) {
-								__m256i batch = _mm256_loadu_si256((__m256i *)buf);
+						while (remaining_byte_count > 32) {
+							__m256i batch = _mm256_loadu_si256((__m256i *)buf);
 
-								__m256i test_newline = _mm256_cmpeq_epi8(batch, newline_needle);
-								__m256i test_complex = _mm256_and_si256(batch, complex_mask);
+							__m256i test_newline = _mm256_cmpeq_epi8(batch, newline_needle);
+							__m256i test_complex = _mm256_and_si256(batch, complex_mask);
 
-								uint32_t newline_detected = (uint32_t)_mm256_movemask_epi8(test_newline);
+							uint32_t newline_detected = (uint32_t)_mm256_movemask_epi8(test_newline);
 
-								if (newline_detected) {
-									uint32_t first_newline_idx = 0;
-									uint_ctz(newline_detected, &first_newline_idx);
+							if (newline_detected) {
+								uint32_t first_newline_idx = 0;
+								uint_ctz(newline_detected, &first_newline_idx);
 
-									__m256i mask_complex =
-										_mm256_loadu_si256((__m256i *)(overhang_mask + 32 - first_newline_idx));
+								__m256i mask_complex =
+									_mm256_loadu_si256((__m256i *)(overhang_mask + 32 - first_newline_idx));
 
-									test_complex = _mm256_and_si256(test_complex, mask_complex);
-									contains_complex = _mm256_or_si256(contains_complex, test_complex);
-
-									file_lines[file_lines_count].contains_complex_chars |=
-										(uint8_t)!_mm256_testz_si256(contains_complex, contains_complex);
-
-									buf += first_newline_idx;
-									remaining_byte_count -= first_newline_idx;
-
-									break;
-								}
-
+								test_complex = _mm256_and_si256(test_complex, mask_complex);
 								contains_complex = _mm256_or_si256(contains_complex, test_complex);
 
-								buf += 32;
-								remaining_byte_count -= 32;
+								file_lines[file_lines_count].contains_complex_chars |=
+									(uint8_t)!_mm256_testz_si256(contains_complex, contains_complex);
+
+								buf += first_newline_idx;
+								remaining_byte_count -= first_newline_idx;
+
+								break;
 							}
 
-							if (buf[0] == '\n' || remaining_byte_count == 1) {
-								last_byte_idx = (size_t)(buf - (char *)file.buf);
+							contains_complex = _mm256_or_si256(contains_complex, test_complex);
 
-								file_lines[file_lines_count].newline_idx = last_byte_idx;
-								file_lines[file_lines_count].start_idx = line_start_idx;
-
-								line_start_idx = last_byte_idx + 1;
-
-								++file_lines_count;
-							} else if (buf[0] < 0) {
-								file_lines[file_lines_count].contains_complex_chars = 1U;
-							}
-
-							++buf;
-							--remaining_byte_count;
+							buf += 32;
+							remaining_byte_count -= 32;
 						}
+
+						if (buf[0] == '\n' || remaining_byte_count == 1) {
+							last_byte_idx = (size_t)(buf - (char *)file.buf);
+
+							file_lines[file_lines_count].newline_idx = last_byte_idx;
+							file_lines[file_lines_count].start_idx = line_start_idx;
+
+							line_start_idx = last_byte_idx + 1;
+
+							++file_lines_count;
+						} else if (buf[0] < 0) {
+							file_lines[file_lines_count].contains_complex_chars = 1U;
+						}
+
+						++buf;
+						--remaining_byte_count;
 					}
 				}
 
 				size_t grid_height_tile = (size_t)floorf((float)backbuf.height_px / (float)tile_height_px);
 				size_t grid_width_tile = backbuf.width_px / tile_width_px;
-				ptrdiff_t lines_per_notch = 3;
 
-				ptrdiff_t new_scroll_offset = (ptrdiff_t)tix->scroll_offset;
-				new_scroll_offset -= lines_per_notch * notches;
-				new_scroll_offset = min(new_scroll_offset, (ptrdiff_t)file_lines_count - 1);
-				new_scroll_offset = max(new_scroll_offset, 0);
-
-				assert(new_scroll_offset >= 0);
-
-				tix->scroll_offset = (size_t)new_scroll_offset;
-
+				// Move cursor
+				uint32_t was_caret_moved = 0U;
 				if (tix_input.move_up.ended_down && tix->caret_pos.row > 0) {
 					--tix->caret_pos.row;
+					was_caret_moved = 1U;
 				}
 
 				if (tix_input.move_down.ended_down && tix->caret_pos.row + 1 < file_lines_count) {
 					++tix->caret_pos.row;
+					was_caret_moved = 1U;
 				}
 
 				size_t new_line_col =
@@ -794,10 +794,12 @@ static unsigned long WINAPI render_run(void *param)
 
 				if (tix_input.move_left.ended_down && tix->caret_pos.col > 0) {
 					--tix->caret_pos.col;
+					was_caret_moved = 1U;
 				}
 
 				if (tix_input.move_right.ended_down && tix->caret_pos.col + 1 < new_line_col) {
 					++tix->caret_pos.col;
+					was_caret_moved = 1U;
 				}
 
 				size_t caret_col = tix->caret_pos.col;
@@ -809,13 +811,23 @@ static unsigned long WINAPI render_run(void *param)
 					}
 				}
 
-				if (tix->caret_pos.row < tix->scroll_offset) {
+				if (was_caret_moved && tix->caret_pos.row < tix->scroll_offset) {
 					tix->scroll_offset = tix->caret_pos.row;
 				}
 
-				if (tix->caret_pos.row >= tix->scroll_offset + grid_height_tile) {
+				if (was_caret_moved && tix->caret_pos.row >= tix->scroll_offset + grid_height_tile) {
 					tix->scroll_offset += tix->scroll_offset + grid_height_tile - tix->caret_pos.row + 1;
 				}
+
+				// Process mouse wheel
+				int64_t new_scroll_offset = (int64_t)tix->scroll_offset;
+				new_scroll_offset -= LINES_PER_NOTCH * (int64_t)tix_input.mouse_notches;
+				new_scroll_offset = min(new_scroll_offset, (int64_t)file_lines_count - 1);
+				new_scroll_offset = max(new_scroll_offset, 0);
+
+				assert(new_scroll_offset >= 0);
+
+				tix->scroll_offset = (size_t)new_scroll_offset;
 
 				// =============================================================================
 				// Segmentation
@@ -1000,8 +1012,8 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 		GetMessageA(&msg, nullptr, 0, 0);
 		TranslateMessage(&msg);
 
-		if (msg.message == WM_CHAR || msg.message == WM_KEYDOWN || msg.message == WM_QUIT || msg.message == WM_SIZE ||
-		    msg.message == WM_MOUSEWHEEL) {
+		if (msg.message == WM_CHAR || msg.message == WM_KEYDOWN || msg.message == WM_KEYUP || msg.message == WM_QUIT ||
+		    msg.message == WM_SIZE || msg.message == WM_MOUSEWHEEL) {
 			PostThreadMessageA(g_render_thread_id, msg.message, msg.wParam, msg.lParam);
 		} else {
 			// Sends the msg to WinProc
