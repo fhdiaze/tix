@@ -66,14 +66,14 @@ static unsigned long g_render_thread_id = 0;
 static void bitmap_draw_border(Bitmap *bitmap, float min_x_px_f, float min_y_px_f, float width_px_f, float height_px_f,
                                uint32_t color_argb)
 {
-	assert(width_px_f > 1.0F);
-	assert(height_px_f > 1.0F);
-	assert(min_x_px_f >= 0.0F);
-	assert(min_y_px_f >= 0.0F);
-	assert(min_x_px_f < (float)bitmap->width_px);
-	assert(min_y_px_f < (float)bitmap->height_px);
-	assert(min_x_px_f + width_px_f <= (float)bitmap->width_px);
-	assert(min_y_px_f + height_px_f <= (float)bitmap->height_px);
+	ASSERT(width_px_f > 1.0F);
+	ASSERT(height_px_f > 1.0F);
+	ASSERT(min_x_px_f >= 0.0F);
+	ASSERT(min_y_px_f >= 0.0F);
+	ASSERT(min_x_px_f < (float)bitmap->width_px);
+	ASSERT(min_y_px_f < (float)bitmap->height_px);
+	ASSERT(min_x_px_f + width_px_f <= (float)bitmap->width_px);
+	ASSERT(min_y_px_f + height_px_f <= (float)bitmap->height_px);
 
 	unsigned min_x_px = (unsigned)floorf(min_x_px_f);
 	unsigned min_y_px = (unsigned)floorf(min_y_px_f);
@@ -136,11 +136,11 @@ static uint32_t bitmap_copy_rect(unsigned char *src_buf, size_t src_width, size_
 {
 	uint32_t error_code = 0U;
 
-	assert(src_offset_x + blit_width <= src_width);
-	assert(src_offset_y + blit_height <= src_height);
+	ASSERT(src_offset_x + blit_width <= src_width);
+	ASSERT(src_offset_y + blit_height <= src_height);
 
-	assert(dst_offset_x + blit_width <= dst_width);
-	assert(dst_offset_y + blit_height <= dst_height);
+	ASSERT(dst_offset_x + blit_width <= dst_width);
+	ASSERT(dst_offset_y + blit_height <= dst_height);
 
 	unsigned char *dst_ptr = dst_buf + dst_offset_x + dst_pitch * dst_offset_y;
 	unsigned char *src_ptr = src_buf + src_offset_x + src_pitch * src_offset_y;
@@ -191,13 +191,13 @@ static uint32_t glyph_rasterize(HDC font_dc, uint32_t code, Arena *arena, unsign
 
 	if (glyph_size_byte != GDI_ERROR) {
 		if (glyph_size_byte) {
-			assert(dst_width_byte >= glyph_metrics.gmBlackBoxX);
-			assert(dst_height_byte >= glyph_metrics.gmBlackBoxY);
+			ASSERT(dst_width_byte >= glyph_metrics.gmBlackBoxX);
+			ASSERT(dst_height_byte >= glyph_metrics.gmBlackBoxY);
 			if (dst_width_byte >= glyph_metrics.gmBlackBoxX && dst_height_byte >= glyph_metrics.gmBlackBoxY) {
 				size_t dst_offset_x_byte = (dst_width_byte - glyph_metrics.gmBlackBoxX) / 2;
 				size_t dst_offset_y_byte = (size_t)((long)ascent_y_byte - glyph_metrics.gmptGlyphOrigin.y);
 
-				assert(dst_offset_y_byte < dst_height_byte);
+				ASSERT(dst_offset_y_byte < dst_height_byte);
 				if (dst_offset_y_byte < dst_height_byte) {
 					uint32_t glyph_row_padding_byte =
 						(sizeof(DWORD) - (size_t)glyph_metrics.gmBlackBoxX % sizeof(DWORD)) % sizeof(DWORD);
@@ -206,8 +206,8 @@ static uint32_t glyph_rasterize(HDC font_dc, uint32_t code, Arena *arena, unsign
 					unsigned glyph_offset_x_byte = 0;
 					signed glyph_offset_y_byte = 0;
 
-					assert(glyph_offset_y_byte >= 0);
-					assert(glyph_offset_y_byte < (signed)dst_height_byte);
+					ASSERT(glyph_offset_y_byte >= 0);
+					ASSERT(glyph_offset_y_byte < (signed)dst_height_byte);
 
 					if (glyph_offset_y_byte >= 0 && glyph_offset_y_byte < (signed)dst_height_byte) {
 						bitmap_copy_rect(glyph_buf, glyph_width_byte, glyph_metrics.gmBlackBoxY, glyph_width_byte,
@@ -302,14 +302,14 @@ static uint32_t glyph_rasterize(HDC font_dc, uint32_t code, Arena *arena, unsign
 static void bitmap_draw_rectangle(Bitmap *bitmap, float min_x_px_f, float min_y_px_f, float max_x_px_f,
                                   float max_y_px_f, float red, float green, float blue)
 {
-	assert(min_x_px_f < max_x_px_f);
-	assert(min_y_px_f < max_y_px_f);
-	assert(min_x_px_f >= 0.0F);
-	assert(min_y_px_f >= 0.0F);
-	assert(min_x_px_f < (float)bitmap->width_px);
-	assert(min_y_px_f < (float)bitmap->height_px);
-	assert(max_x_px_f <= (float)bitmap->width_px);
-	assert(max_y_px_f <= (float)bitmap->height_px);
+	ASSERT(min_x_px_f < max_x_px_f);
+	ASSERT(min_y_px_f < max_y_px_f);
+	ASSERT(min_x_px_f >= 0.0F);
+	ASSERT(min_y_px_f >= 0.0F);
+	ASSERT(min_x_px_f < (float)bitmap->width_px);
+	ASSERT(min_y_px_f < (float)bitmap->height_px);
+	ASSERT(max_x_px_f <= (float)bitmap->width_px);
+	ASSERT(max_y_px_f <= (float)bitmap->height_px);
 
 	unsigned min_x_px = (unsigned)floorf(min_x_px_f);
 	unsigned min_y_px = (unsigned)floorf(min_y_px_f);
@@ -437,10 +437,10 @@ static ReadFileResult sys_file_read(const char *const path)
 	return result;
 }
 
-inline static void keyboard_process_message(KeyState *key_state, uint32_t is_down)
+inline static void keyboard_process_message(KeyState *key_state, uint32_t was_down, uint32_t is_down)
 {
-	if (key_state->ended_down != is_down) {
-		key_state->ended_down = (uint8_t)is_down;
+	key_state->ended_down = (uint8_t)is_down;
+	if (was_down != is_down) {
 		++key_state->half_transition_count;
 	}
 }
@@ -487,7 +487,7 @@ static unsigned long WINAPI render_run(void *param)
 		if (!storage.is_initialized) {
 			arena_init(arena, storage.buf_size_byte - sizeof(Tix), (unsigned char *)storage.buf + sizeof(Tix));
 
-			assert(arena->buf);
+			ASSERT(arena->buf);
 
 			storage.is_initialized = 1U;
 		}
@@ -560,8 +560,6 @@ static unsigned long WINAPI render_run(void *param)
 		LARGE_INTEGER performance_frequency;
 		QueryPerformanceFrequency(&performance_frequency);
 
-		TixInput tix_input = {};
-
 		while (win_state.is_running) {
 			LARGE_INTEGER wall_clock_at_start;
 			QueryPerformanceCounter(&wall_clock_at_start);
@@ -569,7 +567,7 @@ static unsigned long WINAPI render_run(void *param)
 			// =============================================================================
 			// Input
 			// =============================================================================
-			tix_input.mouse_notches = 0;
+			TixInput tix_input = {};
 
 			// Process POSTED messages
 			MSG msg;
@@ -590,24 +588,21 @@ static unsigned long WINAPI render_run(void *param)
 				case WM_SYSKEYUP:
 				case WM_KEYDOWN:
 				case WM_KEYUP: {
-					size_t vk_code = (size_t)msg.wParam;
+				} break;
+				case WM_CHAR: {
+					char c = (char)msg.wParam;
 					size_t key_stroke_info = (size_t)msg.lParam;
 					uint32_t was_down = (key_stroke_info & (1U << 30U)) != 0;
 					uint32_t is_down = (key_stroke_info & (1UL << 31UL)) == 0;
-					if (was_down != is_down) {
-						if (vk_code == 'J') {
-							keyboard_process_message(&tix_input.move_down, is_down);
-						} else if (vk_code == 'K') {
-							keyboard_process_message(&tix_input.move_up, is_down);
-						} else if (vk_code == 'H') {
-							keyboard_process_message(&tix_input.move_left, is_down);
-						} else if (vk_code == 'L') {
-							keyboard_process_message(&tix_input.move_right, is_down);
-						}
+					if (c == 'j') {
+						keyboard_process_message(&tix_input.move_down, was_down, is_down);
+					} else if (c == 'k') {
+						keyboard_process_message(&tix_input.move_up, was_down, is_down);
+					} else if (c == 'h') {
+						keyboard_process_message(&tix_input.move_left, was_down, is_down);
+					} else if (c == 'l') {
+						keyboard_process_message(&tix_input.move_right, was_down, is_down);
 					}
-				} break;
-				case WM_CHAR: {
-					(void)0;
 				} break;
 				case WM_SIZE: {
 					// Why do we send this msg from the window thread if we are not doing anything?
@@ -622,7 +617,7 @@ static unsigned long WINAPI render_run(void *param)
 					// notification, handle the directory vs. file distinction, etc.)
 				} break;
 				default: {
-					assert(false && "unexpected message arrived to the render thread");
+					ASSERT(false && "unexpected message arrived to the render thread");
 				} break;
 				}
 			}
@@ -633,8 +628,8 @@ static unsigned long WINAPI render_run(void *param)
 			RECT client_rect;
 			GetClientRect(window, &client_rect);
 
-			assert(client_rect.right - client_rect.left >= 0);
-			assert(client_rect.bottom - client_rect.top >= 0);
+			ASSERT(client_rect.right - client_rect.left >= 0);
+			ASSERT(client_rect.bottom - client_rect.top >= 0);
 
 			unsigned new_width_px = (unsigned)(client_rect.right - client_rect.left);
 			unsigned new_height_px = (unsigned)(client_rect.bottom - client_rect.top);
@@ -647,14 +642,14 @@ static unsigned long WINAPI render_run(void *param)
 					new_buf = VirtualAlloc(nullptr, new_buf_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 					if (!new_buf) {
 						LOG_ERROR("unable to allocate %zu bytes for the backbuffer", new_buf_size_byte);
-						assert(false && "unable to allocate memory for the backbuffer");
+						ASSERT(false && "unable to allocate memory for the backbuffer");
 					}
 				}
 
 				if (new_buf || new_buf_size_byte == 0) {
 					if (backbuf.buf && !VirtualFree(backbuf.buf, 0, MEM_RELEASE)) {
 						LOG_ERROR("unable to deallocate memory of the previous backbuffer");
-						assert(false && "unable to deallocate memory of the previous backbuffer");
+						ASSERT(false && "unable to deallocate memory of the previous backbuffer");
 					}
 
 					backbuf.buf = new_buf;
@@ -663,7 +658,7 @@ static unsigned long WINAPI render_run(void *param)
 					backbuf.height_px = new_height_px;
 				} else {
 					LOG_ERROR("unable to allocate %zu bytes for the backbuffer", new_buf_size_byte);
-					assert(false && "unable to allocate memory for the backbuffer");
+					ASSERT(false && "unable to allocate memory for the backbuffer");
 				}
 			}
 
@@ -825,7 +820,7 @@ static unsigned long WINAPI render_run(void *param)
 				new_scroll_offset = min(new_scroll_offset, (int64_t)file_lines_count - 1);
 				new_scroll_offset = max(new_scroll_offset, 0);
 
-				assert(new_scroll_offset >= 0);
+				ASSERT(new_scroll_offset >= 0);
 
 				tix->scroll_offset = (size_t)new_scroll_offset;
 
@@ -995,6 +990,7 @@ int CALLBACK WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLi
 	HWND win_handle = CreateWindowExA(0, win_class.lpszClassName, "tix", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
 	                                  CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, nullptr, nullptr, hInstance,
 	                                  nullptr);
+	ASSERT(IsWindow(win_handle));
 	if (!win_handle) {
 		LOG_ERROR("error creating the window");
 		return EXIT_FAILURE;
