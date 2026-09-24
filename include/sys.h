@@ -4,7 +4,7 @@
 #define SYS_H
 
 typedef struct ReadFileResult {
-	size_t size_byte;
+	size_t size;
 	void *buf;
 } ReadFileResult;
 

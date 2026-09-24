@@ -3,16 +3,21 @@
 #define BUILD_MODE "debug"
 #define ARCHITECTURE "x64"
 #define LIVE_BUILD "0"
+
 #define APP_FILE_NAME "app"
 #define SYS_FILE_NAME "sys_win"
-#define SYS_FILE_PATH "./src/sys_win.c"
-#define APP_FILE_PATH "./src/app.c"
+
 #define OUT_DIR "./bin"
 #define DATA_DIR "./data"
+
+#define APP_FILE_PATH "./src/" APP_FILE_NAME ".c"
+#define SYS_FILE_PATH "./src/" SYS_FILE_NAME ".c"
+
 #define OUT_APP_FILE_NAME "tix_app"
 #define OUT_SYS_FILE_NAME "tix_win"
 #define OUT_SYS_FILE_PATH "./bin/tix_win.exe"
 #define OUT_APP_FILE_PATH "./bin/tix_app.dll"
+
 #define FLAGS_FILE "./compile_flags.txt"
 #define DEBUG_FLAGS "-g -gcodeview -O0 -DDEBUG -Wl,/DEBUG:FULL -fms-runtime-lib=static_dbg"
 // #define DEBUG_FLAGS "-g -gcodeview -O0 -DDEBUG -Wl,/DEBUG:FULL -fms-runtime-lib=static_dbg -fsanitize=address -fno-omit-frame-pointer"

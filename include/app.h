@@ -13,11 +13,16 @@
 #define MEMORY_BASE_ADDRESS (nullptr)
 #endif // MEMORY_BASE_ADDRESS
 
-#define MAX_KEY_STACK 256
-#define MAX_FILE_PATH 4096
-#define MIN_DIRECT_CODE_POINT 32
-#define MAX_DIRECT_CODE_POINT 126
-#define DIRECT_CODE_POINTS_COUNT (MAX_DIRECT_CODE_POINT - MIN_DIRECT_CODE_POINT + 1)
+#define BUFFER_POOL_SIZE_MAX GB_TO_BYTE(5ULL)
+#define ATLAS_PIXEL_SIZE 1
+#define LINES_PER_NOTCH 3
+#define POINTS_PER_INCH 72
+#define TILE_SIDE_PX_MAX 256
+#define KEY_STACK_COUNT_MAX 256
+#define FILE_PATH_SIZE_MAX 4096
+#define DIRECT_CODE_POINT_MIN 32
+#define DIRECT_CODE_POINT_MAX 126
+#define DIRECT_CODE_POINTS_COUNT (DIRECT_CODE_POINT_MAX - DIRECT_CODE_POINT_MIN + 1)
 
 typedef enum KEY : uint8_t {
 	KEY_SHIFT,
@@ -53,7 +58,7 @@ typedef struct TixInput {
 	 */
 	signed mouse_notches;
 
-	KEY key_stack[MAX_KEY_STACK];
+	KEY key_stack[KEY_STACK_COUNT_MAX];
 	KeyState key_states[KEY_COUNT];
 
 	union {
@@ -99,7 +104,7 @@ typedef struct Line {
 } Line;
 
 typedef struct Storage {
-	size_t buf_size_byte;
+	size_t buf_size;
 	void *buf;
 
 	uint8_t is_initialized;
@@ -129,7 +134,7 @@ typedef struct Tix {
 	ContextMode context_mode;
 	CaretMode caret_mode;
 
-	char context_path[MAX_FILE_PATH];
+	char context_path[FILE_PATH_SIZE_MAX];
 } Tix;
 
 void app_init(Storage *storage);

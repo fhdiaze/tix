@@ -20,9 +20,6 @@
 #define DWMWA_TEXT_COLOR 36
 #endif
 
-#define LINES_PER_NOTCH 3
-#define POINTS_PER_INCH 72
-
 #define BG_COLOR 0x00202230U
 #define FG_COLOR 0x00FFFF00U
 #define ALPHA_MASK 0xFF000000U
@@ -45,16 +42,16 @@
  */
 typedef struct Bitmap {
 	void *buf;
-	size_t buf_size_byte;
+	size_t buf_size;
 
 	unsigned width_px;
 	unsigned height_px;
 
-	uint8_t pixel_size_byte;
+	uint8_t pixel_size;
 } Bitmap;
 
 typedef struct WinState {
-	size_t buf_size_byte;
+	size_t buf_size;
 	void *buf;
 
 	uint8_t is_running;
@@ -63,65 +60,60 @@ typedef struct WinState {
 // TODO(fredy):  - remove this global
 static unsigned long g_render_thread_id = 0;
 
-static void bitmap_draw_border(Bitmap *bitmap, float min_x_px_f, float min_y_px_f, float width_px_f, float height_px_f,
-                               uint32_t color_argb)
+static void bitmap_draw_border(Bitmap *bitmap, float rect_x_px, float rect_y_px, float rect_width_px,
+                               float rect_height_px, uint32_t color_argb)
 {
-	ASSERT(width_px_f > 1.0F);
-	ASSERT(height_px_f > 1.0F);
-	ASSERT(min_x_px_f >= 0.0F);
-	ASSERT(min_y_px_f >= 0.0F);
-	ASSERT(min_x_px_f < (float)bitmap->width_px);
-	ASSERT(min_y_px_f < (float)bitmap->height_px);
-	ASSERT(min_x_px_f + width_px_f <= (float)bitmap->width_px);
-	ASSERT(min_y_px_f + height_px_f <= (float)bitmap->height_px);
+	ASSERT(rect_width_px > 1.0F);
+	ASSERT(rect_height_px > 1.0F);
+	ASSERT(rect_x_px >= 0.0F);
+	ASSERT(rect_y_px >= 0.0F);
+	ASSERT(rect_x_px < (float)bitmap->width_px);
+	ASSERT(rect_y_px < (float)bitmap->height_px);
+	ASSERT(rect_x_px + rect_width_px <= (float)bitmap->width_px);
+	ASSERT(rect_y_px + rect_height_px <= (float)bitmap->height_px);
 
-	unsigned min_x_px = (unsigned)floorf(min_x_px_f);
-	unsigned min_y_px = (unsigned)floorf(min_y_px_f);
-	size_t width_px = (unsigned)ceilf(width_px_f);
-	size_t height_px = (unsigned)ceilf(height_px_f);
+	unsigned rect_x_idx_min = (unsigned)floorf(rect_x_px);
+	unsigned rect_y_idx_min = (unsigned)floorf(rect_y_px);
+	size_t x_count = (unsigned)ceilf(rect_width_px);
+	size_t y_count = (unsigned)ceilf(rect_height_px);
 
-	size_t backbuf_pitch_size_byte = (size_t)bitmap->width_px * bitmap->pixel_size_byte;
+	size_t bitmap_pitch_size = (size_t)bitmap->width_px * bitmap->pixel_size;
 
-	unsigned char *pixel_first_byte = (unsigned char *)bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) +
-	                                  min_y_px * backbuf_pitch_size_byte;
-	unsigned char *last_pixel_first_byte = (unsigned char *)bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) +
-	                                       min_y_px * backbuf_pitch_size_byte + width_px * bitmap->pixel_size_byte +
-	                                       height_px * backbuf_pitch_size_byte;
-
-	// size_t pixel_first_byte = 0 + (size_t)(min_x_px * bitmap->pixel_size_byte) + min_y_px * backbuf_pitch_size_byte;
-	// size_t last_pixel_first_byte = 0 + (size_t)(min_x_px * bitmap->pixel_size_byte) +
-	//                                min_y_px * backbuf_pitch_size_byte + width_px * bitmap->pixel_size_byte +
-	//                                height_px * backbuf_pitch_size_byte;
+	unsigned char *pixel_offset = (unsigned char *)bitmap->buf + (size_t)(rect_x_idx_min * bitmap->pixel_size) +
+	                              rect_y_idx_min * bitmap_pitch_size;
+	unsigned char *last_pixel_offset = (unsigned char *)bitmap->buf + (size_t)(rect_x_idx_min * bitmap->pixel_size) +
+	                                   rect_y_idx_min * bitmap_pitch_size + x_count * bitmap->pixel_size +
+	                                   y_count * bitmap_pitch_size;
 
 	uint32_t *pixel = nullptr;
 	unsigned x = 0;
 	unsigned y = 0;
-	while (pixel_first_byte <= last_pixel_first_byte) {
-		pixel = (uint32_t *)pixel_first_byte;
+	while (pixel_offset <= last_pixel_offset) {
+		pixel = (uint32_t *)pixel_offset;
 		*pixel = color_argb;
 
 		if (y == 0) {
-			if (x < width_px - 1) {
-				pixel_first_byte += bitmap->pixel_size_byte;
+			if (x < x_count - 1) {
+				pixel_offset += bitmap->pixel_size;
 				++x;
 			} else {
-				pixel_first_byte += backbuf_pitch_size_byte - (width_px - 1) * bitmap->pixel_size_byte;
+				pixel_offset += bitmap_pitch_size - (x_count - 1) * bitmap->pixel_size;
 				x = 0;
 				++y;
 			}
-		} else if (y == height_px - 1) {
-			if (x < width_px - 1) {
-				pixel_first_byte += bitmap->pixel_size_byte;
+		} else if (y == y_count - 1) {
+			if (x < x_count - 1) {
+				pixel_offset += bitmap->pixel_size;
 				++x;
 			} else {
 				break;
 			}
 		} else {
 			if (x == 0) {
-				pixel_first_byte += (width_px - 1) * bitmap->pixel_size_byte;
-				x += width_px - 1;
+				pixel_offset += (x_count - 1) * bitmap->pixel_size;
+				x += x_count - 1;
 			} else {
-				pixel_first_byte += backbuf_pitch_size_byte - (width_px - 1) * bitmap->pixel_size_byte;
+				pixel_offset += bitmap_pitch_size - (x_count - 1) * bitmap->pixel_size;
 				x = 0;
 				++y;
 			}
@@ -129,33 +121,32 @@ static void bitmap_draw_border(Bitmap *bitmap, float min_x_px_f, float min_y_px_
 	}
 }
 
-static uint32_t bitmap_copy_rect(unsigned char *src_buf, size_t src_width, size_t src_height, size_t src_pitch,
-                                 size_t src_offset_x, size_t src_offset_y, unsigned char *dst_buf, size_t dst_width,
-                                 size_t dst_height, size_t dst_pitch, size_t dst_offset_x, size_t dst_offset_y,
-                                 size_t blit_width, size_t blit_height)
+static uint32_t mem_copy_rect(unsigned char *src_buf, size_t src_size_x, size_t src_size_y, size_t src_pitch_size,
+                              size_t src_offset_x, size_t src_offset_y, unsigned char *dst_buf, size_t dst_size_x,
+                              size_t dst_size_y, size_t dst_pitch_size, size_t dst_offset_x, size_t dst_offset_y,
+                              size_t blit_size_x, size_t blit_size_y)
 {
 	uint32_t error_code = 0U;
 
-	ASSERT(src_offset_x + blit_width <= src_width);
-	ASSERT(src_offset_y + blit_height <= src_height);
+	ASSERT(src_offset_x + blit_size_x <= src_size_x);
+	ASSERT(src_offset_y + blit_size_y <= src_size_y);
 
-	ASSERT(dst_offset_x + blit_width <= dst_width);
-	ASSERT(dst_offset_y + blit_height <= dst_height);
+	ASSERT(dst_offset_x + blit_size_x <= dst_size_x);
+	ASSERT(dst_offset_y + blit_size_y <= dst_size_y);
 
-	unsigned char *dst_ptr = dst_buf + dst_offset_x + dst_pitch * dst_offset_y;
-	unsigned char *src_ptr = src_buf + src_offset_x + src_pitch * src_offset_y;
+	unsigned char *dst_ptr = dst_buf + dst_offset_x + dst_pitch_size * dst_offset_y;
+	unsigned char *src_ptr = src_buf + src_offset_x + src_pitch_size * src_offset_y;
 
-	for (size_t y = 0; y < blit_height; ++y) {
-		for (size_t x = 0; x < blit_width; ++x) {
+	for (size_t y = 0; y < blit_size_y; ++y) {
+		for (size_t x = 0; x < blit_size_x; ++x) {
 			*dst_ptr = *src_ptr;
-			// *dst_ptr = 255;
 
 			++dst_ptr;
 			++src_ptr;
 		}
 
-		dst_ptr += dst_pitch - blit_width;
-		src_ptr += src_pitch - blit_width;
+		dst_ptr += dst_pitch_size - blit_size_x;
+		src_ptr += src_pitch_size - blit_size_x;
 	}
 
 	return error_code;
@@ -166,9 +157,8 @@ static uint32_t bitmap_copy_rect(unsigned char *src_buf, size_t src_width, size_
  *
  * @return uint32_t 0 on success. Non-zero on failure, e.g. if the allocation fails.
  */
-static uint32_t glyph_rasterize(HDC font_dc, uint32_t code, Arena *arena, unsigned ascent_y_byte,
-                                unsigned char *dst_buf, size_t dst_width_byte, size_t dst_height_byte,
-                                size_t dst_pitch_byte)
+static uint32_t glyph_rasterize(HDC font_dc, uint32_t glyph_code, Arena *arena, unsigned ascent_size,
+                                unsigned char *dst_buf, size_t dst_size_x, size_t dst_size_y, size_t dst_pitch_size)
 {
 	uint32_t error_code = 0U;
 
@@ -177,45 +167,44 @@ static uint32_t glyph_rasterize(HDC font_dc, uint32_t code, Arena *arena, unsign
 
 	unsigned char *glyph_buf = nullptr;
 	GLYPHMETRICS glyph_metrics;
-	DWORD glyph_size_byte = GetGlyphOutlineA(font_dc, code, GGO_GRAY8_BITMAP, &glyph_metrics, 0, nullptr, &identity);
-	if (glyph_size_byte != GDI_ERROR && glyph_size_byte && glyph_size_byte <= dst_width_byte * dst_height_byte) {
-		glyph_buf = arena_push_zero(arena, glyph_size_byte);
+	DWORD glyph_buf_byte_count = 0;
+	DWORD glyph_buf_size =
+		GetGlyphOutlineA(font_dc, glyph_code, GGO_GRAY8_BITMAP, &glyph_metrics, 0, nullptr, &identity);
+	if (glyph_buf_size != GDI_ERROR && glyph_buf_size && glyph_buf_size <= dst_size_x * dst_size_y) {
+		glyph_buf = arena_push_zero(arena, glyph_buf_size);
 
 		if (glyph_buf) {
-			glyph_size_byte = GetGlyphOutlineA(font_dc, code, GGO_GRAY8_BITMAP, &glyph_metrics, glyph_size_byte,
-			                                   glyph_buf, &identity);
+			glyph_buf_byte_count = GetGlyphOutlineA(font_dc, glyph_code, GGO_GRAY8_BITMAP, &glyph_metrics,
+			                                        glyph_buf_size, glyph_buf, &identity);
 		} else {
 			error_code = 1U;
 		}
 	}
 
-	if (glyph_size_byte != GDI_ERROR) {
-		if (glyph_size_byte) {
-			ASSERT(dst_width_byte >= glyph_metrics.gmBlackBoxX);
-			ASSERT(dst_height_byte >= glyph_metrics.gmBlackBoxY);
-			if (dst_width_byte >= glyph_metrics.gmBlackBoxX && dst_height_byte >= glyph_metrics.gmBlackBoxY) {
-				size_t dst_offset_x_byte = (dst_width_byte - glyph_metrics.gmBlackBoxX) / 2;
-				size_t dst_offset_y_byte = (size_t)((long)ascent_y_byte - glyph_metrics.gmptGlyphOrigin.y);
+	if (glyph_buf_byte_count != GDI_ERROR) {
+		if (glyph_buf_byte_count) {
+			ASSERT(dst_size_x >= glyph_metrics.gmBlackBoxX);
+			ASSERT(dst_size_y >= glyph_metrics.gmBlackBoxY);
+			if (dst_size_x >= glyph_metrics.gmBlackBoxX && dst_size_y >= glyph_metrics.gmBlackBoxY) {
+				size_t dst_offset_x = (dst_size_x - glyph_metrics.gmBlackBoxX) / 2;
+				size_t dst_offset_y = (size_t)((long)ascent_size - glyph_metrics.gmptGlyphOrigin.y);
 
-				ASSERT(dst_offset_y_byte < dst_height_byte);
-				if (dst_offset_y_byte < dst_height_byte) {
-					uint32_t glyph_row_padding_byte =
+				ASSERT(dst_offset_y < dst_size_y);
+				if (dst_offset_y < dst_size_y) {
+					uint32_t glyph_padding_x_size =
 						(sizeof(DWORD) - (size_t)glyph_metrics.gmBlackBoxX % sizeof(DWORD)) % sizeof(DWORD);
-					unsigned glyph_width_byte = glyph_metrics.gmBlackBoxX + glyph_row_padding_byte;
+					unsigned glyph_size_x = glyph_metrics.gmBlackBoxX + glyph_padding_x_size;
 
-					unsigned glyph_offset_x_byte = 0;
-					signed glyph_offset_y_byte = 0;
+					unsigned glyph_offset_x = 0;
+					signed glyph_offset_y = 0;
 
-					ASSERT(glyph_offset_y_byte >= 0);
-					ASSERT(glyph_offset_y_byte < (signed)dst_height_byte);
+					ASSERT(glyph_offset_y >= 0);
+					ASSERT(glyph_offset_y < (signed)dst_size_y);
 
-					if (glyph_offset_y_byte >= 0 && glyph_offset_y_byte < (signed)dst_height_byte) {
-						bitmap_copy_rect(glyph_buf, glyph_width_byte, glyph_metrics.gmBlackBoxY, glyph_width_byte,
-						                 glyph_offset_x_byte, (uint32_t)glyph_offset_y_byte, dst_buf, dst_width_byte,
-						                 dst_height_byte, dst_pitch_byte, dst_offset_x_byte, dst_offset_y_byte,
-						                 glyph_metrics.gmBlackBoxX, glyph_metrics.gmBlackBoxY);
-						// bitmap_copy_rect(glyph_buf, 1, dst_height_byte, 1, 0, 0, dst_buf, dst_width_byte,
-						//                  dst_height_byte, dst_pitch_byte, 0, 0, 1, dst_height_byte);
+					if (glyph_offset_y >= 0 && glyph_offset_y < (signed)dst_size_y) {
+						mem_copy_rect(glyph_buf, glyph_size_x, glyph_metrics.gmBlackBoxY, glyph_size_x, glyph_offset_x,
+						              (uint32_t)glyph_offset_y, dst_buf, dst_size_x, dst_size_y, dst_pitch_size,
+						              dst_offset_x, dst_offset_y, glyph_metrics.gmBlackBoxX, glyph_metrics.gmBlackBoxY);
 
 					} else {
 						error_code = 1U;
@@ -291,49 +280,49 @@ static uint32_t glyph_rasterize(HDC font_dc, uint32_t code, Arena *arena, unsign
  * @brief max_x_px_f and max_y_px_f are not included
  *
  * @param bitmap
- * @param min_x_px_f
- * @param min_y_px_f
- * @param max_x_px_f
- * @param max_y_px_f
+ * @param bounds_x_px_min
+ * @param bounds_y_px_min
+ * @param bounds_x_px_max
+ * @param bounds_y_px_max
  * @param red
  * @param green
  * @param blue
  */
-static void bitmap_draw_rectangle(Bitmap *bitmap, float min_x_px_f, float min_y_px_f, float max_x_px_f,
-                                  float max_y_px_f, float red, float green, float blue)
+static void bitmap_draw_rectangle(Bitmap *bitmap, float bounds_x_px_min, float bounds_y_px_min, float bounds_x_px_max,
+                                  float bounds_y_px_max, float red, float green, float blue)
 {
-	ASSERT(min_x_px_f < max_x_px_f);
-	ASSERT(min_y_px_f < max_y_px_f);
-	ASSERT(min_x_px_f >= 0.0F);
-	ASSERT(min_y_px_f >= 0.0F);
-	ASSERT(min_x_px_f < (float)bitmap->width_px);
-	ASSERT(min_y_px_f < (float)bitmap->height_px);
-	ASSERT(max_x_px_f <= (float)bitmap->width_px);
-	ASSERT(max_y_px_f <= (float)bitmap->height_px);
+	ASSERT(bounds_x_px_min < bounds_x_px_max);
+	ASSERT(bounds_y_px_min < bounds_y_px_max);
+	ASSERT(bounds_x_px_min >= 0.0F);
+	ASSERT(bounds_y_px_min >= 0.0F);
+	ASSERT(bounds_x_px_min < (float)bitmap->width_px);
+	ASSERT(bounds_y_px_min < (float)bitmap->height_px);
+	ASSERT(bounds_x_px_max <= (float)bitmap->width_px);
+	ASSERT(bounds_y_px_max <= (float)bitmap->height_px);
 
-	unsigned min_x_px = (unsigned)floorf(min_x_px_f);
-	unsigned min_y_px = (unsigned)floorf(min_y_px_f);
-	unsigned max_x_px = (unsigned)ceilf(max_x_px_f);
-	unsigned max_y_px = (unsigned)ceilf(max_y_px_f);
+	unsigned bounds_x_idx_min = (unsigned)floorf(bounds_x_px_min);
+	unsigned bounds_y_idx_min = (unsigned)floorf(bounds_y_px_min);
+	unsigned bounds_x_idx_max = (unsigned)ceilf(bounds_x_px_max);
+	unsigned bounds_y_idx_max = (unsigned)ceilf(bounds_y_px_max);
 
 	uint32_t red_bits = (uint32_t)roundf(red * 255.0F);
 	uint32_t green_bits = (uint32_t)roundf(green * 255.0F);
 	uint32_t blue_bits = (uint32_t)roundf(blue * 255.0F);
-	uint32_t rgb_color = red_bits << 16UL | green_bits << 8UL | blue_bits;
+	uint32_t color_argb = red_bits << 16UL | green_bits << 8UL | blue_bits;
 
-	uint32_t pitch_size_byte = bitmap->width_px * bitmap->pixel_size_byte;
+	uint32_t pitch_size = bitmap->width_px * bitmap->pixel_size;
 
-	unsigned char *pixel_first_byte = (unsigned char *)bitmap->buf + (size_t)(min_x_px * bitmap->pixel_size_byte) +
-	                                  (size_t)(min_y_px * pitch_size_byte);
+	unsigned char *pixel_first_byte = (unsigned char *)bitmap->buf + (size_t)(bounds_x_idx_min * bitmap->pixel_size) +
+	                                  (size_t)(bounds_y_idx_min * pitch_size);
 	uint32_t *pixel = nullptr;
-	for (unsigned y = min_y_px; y < max_y_px; ++y) {
-		for (unsigned x = min_x_px; x < max_x_px; ++x) {
+	for (unsigned y = bounds_y_idx_min; y < bounds_y_idx_max; ++y) {
+		for (unsigned x = bounds_x_idx_min; x < bounds_x_idx_max; ++x) {
 			pixel = (uint32_t *)pixel_first_byte;
-			*pixel = rgb_color;
-			pixel_first_byte += bitmap->pixel_size_byte;
+			*pixel = color_argb;
+			pixel_first_byte += bitmap->pixel_size;
 		}
 
-		pixel_first_byte += pitch_size_byte - (max_x_px - min_x_px) * bitmap->pixel_size_byte;
+		pixel_first_byte += pitch_size - (bounds_x_idx_max - bounds_x_idx_min) * bitmap->pixel_size;
 	}
 }
 
@@ -405,22 +394,21 @@ static ReadFileResult sys_file_read(const char *const path)
 	if (handle != INVALID_HANDLE_VALUE) {
 		LARGE_INTEGER filesize_struct;
 		if (GetFileSizeEx(handle, &filesize_struct)) {
-			uint32_t file_size_byte = (uint32_t)(filesize_struct.QuadPart);
+			uint32_t file_size = (uint32_t)(filesize_struct.QuadPart);
 
 			// TODO(fredy): if the file is too big, use file mapping?
-			result.buf = VirtualAlloc(nullptr, file_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+			result.buf = VirtualAlloc(nullptr, file_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 			if (result.buf) {
-				DWORD read_size_byte = 0;
-				if (ReadFile(handle, result.buf, file_size_byte, &read_size_byte, nullptr) ||
-				    read_size_byte == file_size_byte) {
-					result.size_byte = file_size_byte;
+				DWORD read_size = 0;
+				if (ReadFile(handle, result.buf, file_size, &read_size, nullptr) || read_size == file_size) {
+					result.size = file_size;
 				} else {
 					LOG_ERROR("failed to read the file: %s", path);
 
 					file_free_memory(result.buf);
 
 					result.buf = nullptr;
-					result.size_byte = 0;
+					result.size = 0;
 				}
 			} else {
 				LOG_ERROR("failed to allocate memory for the content of file: %s", path);
@@ -455,24 +443,32 @@ static unsigned long WINAPI render_run(void *param)
 			.is_running = 1U,
 		};
 
+		// perm (Tix, ), font(atlas, tiles, scratch), files, scratch
+		size_t tile_size_px_max = (size_t)TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX;
+		size_t atlas_tile_size_max = tile_size_px_max * ATLAS_PIXEL_SIZE;
+		size_t atlas_size_max = DIRECT_CODE_POINTS_COUNT * atlas_tile_size_max;
+		size_t font_scratch_buf_size_max = tile_size_px_max * 20;
+		size_t font_buf_size_max = atlas_size_max + font_scratch_buf_size_max;
+
+		size_t buf_size = sizeof(Tix) + font_buf_size_max + BUFFER_POOL_SIZE_MAX;
 		Storage storage = {
-			.buf_size_byte = MB_TO_BYTE(128ULL),
+			.buf_size = buf_size,
 		};
 
 		Bitmap backbuf = {
-			.pixel_size_byte = 4,
+			.pixel_size = 4,
 		};
 		BITMAPINFO bitmap_info = { .bmiHeader = {
 									   .biSize = sizeof(BITMAPINFOHEADER),
 									   .biPlanes = 1,
-									   .biBitCount = CHAR_BIT * backbuf.pixel_size_byte,
+									   .biBitCount = CHAR_BIT * backbuf.pixel_size,
 									   .biCompression = BI_RGB,
 								   } };
 
-		win_state.buf_size_byte = storage.buf_size_byte;
+		win_state.buf_size = storage.buf_size;
 		win_state.buf =
 			// NOLINTNEXTLINE(performance-no-int-to-ptr): fixed base address for deterministic pointers across runs
-			VirtualAlloc(MEMORY_BASE_ADDRESS, win_state.buf_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+			VirtualAlloc(MEMORY_BASE_ADDRESS, win_state.buf_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 		if (win_state.buf) {
 			storage.buf = (unsigned char *)win_state.buf;
 		}
@@ -485,7 +481,7 @@ static unsigned long WINAPI render_run(void *param)
 		Arena *arena = &tix->arena;
 
 		if (!storage.is_initialized) {
-			arena_init(arena, storage.buf_size_byte - sizeof(Tix), (unsigned char *)storage.buf + sizeof(Tix));
+			arena_init(arena, storage.buf_size - sizeof(Tix), (unsigned char *)storage.buf + sizeof(Tix));
 
 			ASSERT(arena->buf);
 
@@ -520,41 +516,43 @@ static unsigned long WINAPI render_run(void *param)
 		tile_width_px = (unsigned)max((long)tile_width_px, size.cx);
 		tile_height_px = (unsigned)max((long)tile_height_px, size.cy);
 
-		unsigned tile_size_byte = tile_width_px * tile_height_px;
+		ASSERT(tile_width_px <= tile_size_px_max);
+		ASSERT(tile_height_px <= tile_size_px_max);
 
-		// TODO(fredy): what is the correct size for this?
-		size_t font_arena_size_byte = MB_TO_BYTE(16ULL);
-		void *font_arena_buf = arena_push(arena, font_arena_size_byte);
+		unsigned atlas_tile_size = tile_width_px * tile_height_px * ATLAS_PIXEL_SIZE;
+
+		ASSERT(atlas_tile_size <= atlas_tile_size_max);
+
+		void *font_arena_buf = arena_push(arena, font_buf_size_max);
 		Arena font_arena;
 		if (font_arena_buf) {
-			arena_init(&font_arena, font_arena_size_byte, font_arena_buf);
+			arena_init(&font_arena, font_buf_size_max, font_arena_buf);
 		}
 
 		ArenaMark init_mark = arena_mark(arena);
 
 		unsigned char *glyph_atlas = nullptr;
-		size_t glyph_atlas_size_byte = (size_t)DIRECT_CODE_POINTS_COUNT * tile_width_px * tile_height_px;
+		size_t glyph_atlas_size = (size_t)DIRECT_CODE_POINTS_COUNT * tile_width_px * tile_height_px;
 		if (font_arena.buf) {
-			glyph_atlas = arena_push_zero(&font_arena, glyph_atlas_size_byte);
+			glyph_atlas = arena_push_zero(&font_arena, glyph_atlas_size);
 			if (glyph_atlas) {
-				for (char p = MIN_DIRECT_CODE_POINT; p <= MAX_DIRECT_CODE_POINT; ++p) {
-					GlyphIdx glyph_idx = { .value = (uint32_t)p - MIN_DIRECT_CODE_POINT };
+				for (char p = DIRECT_CODE_POINT_MIN; p <= DIRECT_CODE_POINT_MAX; ++p) {
+					GlyphIdx glyph_idx = { .value = (uint32_t)p - DIRECT_CODE_POINT_MIN };
 					glyph_rasterize(font_dc, (uint32_t)p, arena, tile_ascent_px,
-					                glyph_atlas + (size_t)(glyph_idx.value * tile_size_byte), tile_width_px,
+					                glyph_atlas + (size_t)(glyph_idx.value * atlas_tile_size), tile_width_px,
 					                tile_height_px, tile_width_px);
+					arena_rewind(&init_mark);
 				}
 			}
 		}
-
-		arena_rewind(&init_mark);
 
 		const char *file_path = "./test.txt";
 
 		ReadFileResult file = {};
 		FILETIME file_previous_write_time = {};
 
-		constexpr uint32_t max_lines = 1000000;
-		Line *file_lines = ARENA_PUSH_ARRAY(arena, Line, max_lines);
+		constexpr uint32_t lines_count_max = 1000000;
+		Line *file_lines = ARENA_PUSH_ARRAY(arena, Line, lines_count_max);
 		size_t file_lines_count = 0;
 
 		LARGE_INTEGER performance_frequency;
@@ -636,28 +634,27 @@ static unsigned long WINAPI render_run(void *param)
 
 			if (new_width_px != backbuf.width_px || new_height_px != backbuf.height_px) {
 				void *new_buf = nullptr;
-				size_t new_buf_size_byte =
-					(size_t)new_width_px * (size_t)new_height_px * (size_t)backbuf.pixel_size_byte;
-				if (new_buf_size_byte > 0) {
-					new_buf = VirtualAlloc(nullptr, new_buf_size_byte, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+				size_t new_buf_size = (size_t)new_width_px * (size_t)new_height_px * (size_t)backbuf.pixel_size;
+				if (new_buf_size > 0) {
+					new_buf = VirtualAlloc(nullptr, new_buf_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 					if (!new_buf) {
-						LOG_ERROR("unable to allocate %zu bytes for the backbuffer", new_buf_size_byte);
+						LOG_ERROR("unable to allocate %zu bytes for the backbuffer", new_buf_size);
 						ASSERT(false && "unable to allocate memory for the backbuffer");
 					}
 				}
 
-				if (new_buf || new_buf_size_byte == 0) {
+				if (new_buf || new_buf_size == 0) {
 					if (backbuf.buf && !VirtualFree(backbuf.buf, 0, MEM_RELEASE)) {
 						LOG_ERROR("unable to deallocate memory of the previous backbuffer");
 						ASSERT(false && "unable to deallocate memory of the previous backbuffer");
 					}
 
 					backbuf.buf = new_buf;
-					backbuf.buf_size_byte = new_buf_size_byte;
+					backbuf.buf_size = new_buf_size;
 					backbuf.width_px = new_width_px;
 					backbuf.height_px = new_height_px;
 				} else {
-					LOG_ERROR("unable to allocate %zu bytes for the backbuffer", new_buf_size_byte);
+					LOG_ERROR("unable to allocate %zu bytes for the backbuffer", new_buf_size);
 					ASSERT(false && "unable to allocate memory for the backbuffer");
 				}
 			}
@@ -665,7 +662,7 @@ static unsigned long WINAPI render_run(void *param)
 			// =============================================================================
 			// Update
 			// =============================================================================
-			size_t backbuf_pitch_size_byte = (size_t)backbuf.width_px * backbuf.pixel_size_byte;
+			size_t backbuf_pitch_size = (size_t)backbuf.width_px * backbuf.pixel_size;
 
 			if (backbuf.buf) {
 				uint32_t was_file_updated = 0U;
@@ -704,14 +701,14 @@ static unsigned long WINAPI render_run(void *param)
 						0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
 					};
 					char *buf = (char *)file.buf;
-					size_t remaining_byte_count = file.size_byte;
+					size_t remaining_byte_count = file.size;
 
 					__m256i newline_needle = _mm256_set1_epi8('\n');
 					__m256i complex_mask = _mm256_set1_epi8((char)0x80);
 					size_t line_start_idx = 0;
 					size_t last_byte_idx = 0;
 
-					while (file_lines_count < max_lines && remaining_byte_count) {
+					while (file_lines_count < lines_count_max && remaining_byte_count) {
 						__m256i contains_complex = _mm256_setzero_si256();
 
 						while (remaining_byte_count > 32) {
@@ -866,16 +863,16 @@ static unsigned long WINAPI render_run(void *param)
 							bg_color = BG_COLOR;
 						}
 
-						if (c >= MIN_DIRECT_CODE_POINT && c <= MAX_DIRECT_CODE_POINT) {
-							glyph_idx.value = (unsigned char)c - MIN_DIRECT_CODE_POINT;
-							glyph_buf = glyph_atlas + (size_t)glyph_idx.value * tile_size_byte;
+						if (c >= DIRECT_CODE_POINT_MIN && c <= DIRECT_CODE_POINT_MAX) {
+							glyph_idx.value = (unsigned char)c - DIRECT_CODE_POINT_MIN;
+							glyph_buf = glyph_atlas + (size_t)glyph_idx.value * atlas_tile_size;
 
 							// TODO(fredy): what happen with width 1.5F?
 
 							// in memory: BB GG RR AA
 							uint8_t *dst_px_ptr = (unsigned char *)backbuf.buf +
-							                      (size_t)(tile_min_x_px * backbuf.pixel_size_byte) +
-							                      backbuf_pitch_size_byte * tile_min_y_px;
+							                      (size_t)(tile_min_x_px * backbuf.pixel_size) +
+							                      backbuf_pitch_size * tile_min_y_px;
 							unsigned char *coverage_ptr = glyph_buf;
 
 							// TODO(fredy): should I use SIMD here?
@@ -907,7 +904,7 @@ static unsigned long WINAPI render_run(void *param)
 									++coverage_ptr;
 								}
 
-								dst_px_ptr += backbuf_pitch_size_byte - (size_t)tile_width_px * backbuf.pixel_size_byte;
+								dst_px_ptr += backbuf_pitch_size - (size_t)tile_width_px * backbuf.pixel_size;
 
 								// bitmap_draw_border(&backbuf, (float)cell_min_x_px, (float)cell_min_y_px,
 								//                    (float)cell_blit_width_px, (float)cell_blit_height_px,
