@@ -13,8 +13,11 @@
 #define MEMORY_BASE_ADDRESS (nullptr)
 #endif // MEMORY_BASE_ADDRESS
 
-#define BUFFER_POOL_SIZE_MAX GB_TO_BYTE(5ULL)
-#define ATLAS_PIXEL_SIZE 1
+#define PIXEL_SIZE 4
+#define WINDOW_WIDTH_PX_MAX 7680
+#define WINDOW_HEIGHT_PX_MAX 4320
+#define BACKBUF_SIZE (WINDOW_WIDTH_PX_MAX * WINDOW_HEIGHT_PX_MAX * PIXEL_SIZE)
+#define BUFFER_POOL_SIZE_MAX GB_TO_BYTE(3ULL)
 #define LINES_PER_NOTCH 3
 #define POINTS_PER_INCH 72
 #define TILE_SIDE_PX_MAX 256
@@ -23,6 +26,9 @@
 #define DIRECT_CODE_POINT_MIN 32
 #define DIRECT_CODE_POINT_MAX 126
 #define DIRECT_CODE_POINTS_COUNT (DIRECT_CODE_POINT_MAX - DIRECT_CODE_POINT_MIN + 1)
+#define ATLAS_PIXEL_SIZE 1
+#define ATLAS_TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE)
+#define ATLAS_BUF_SIZE (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE * DIRECT_CODE_POINTS_COUNT)
 
 typedef enum KEY : uint8_t {
 	KEY_SHIFT,
@@ -115,21 +121,29 @@ typedef struct CaretPos {
 	uint32_t col;
 } CaretPos;
 
+typedef struct Atlas {
+	unsigned char buf[ATLAS_BUF_SIZE];
+	size_t buf_count;
+} Atlas;
+
+typedef struct Backbuf {
+	unsigned char buf[BACKBUF_SIZE];
+	uint32_t width_px;
+	uint32_t height_px;
+} Backbuf;
+
 typedef struct Tix {
 	Arena arena;
-	Arena perm_arena;
+	Arena renderer_arena;
+	Arena buffers_arena;
 
 	size_t scroll_offset;
 	size_t lines_count;
 
+	Atlas atlas;
+	Backbuf backbuf;
+
 	CaretPos caret_pos;
-
-	Tile *tiles;
-	uint32_t width_tile;
-	uint32_t height_tile;
-
-	void *atlas_buf;
-	size_t atlas_buf_size_byte;
 
 	ContextMode context_mode;
 	CaretMode caret_mode;
