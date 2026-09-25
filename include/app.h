@@ -16,7 +16,7 @@
 #define PIXEL_SIZE 4
 #define WINDOW_WIDTH_PX_MAX 7680
 #define WINDOW_HEIGHT_PX_MAX 4320
-#define BACKBUF_SIZE (WINDOW_WIDTH_PX_MAX * WINDOW_HEIGHT_PX_MAX * PIXEL_SIZE)
+#define BACKBUF_SIZE_MAX (WINDOW_WIDTH_PX_MAX * WINDOW_HEIGHT_PX_MAX * PIXEL_SIZE)
 #define BUFFER_POOL_SIZE_MAX GB_TO_BYTE(3ULL)
 #define LINES_PER_NOTCH 3
 #define POINTS_PER_INCH 72
@@ -28,7 +28,7 @@
 #define DIRECT_CODE_POINTS_COUNT (DIRECT_CODE_POINT_MAX - DIRECT_CODE_POINT_MIN + 1)
 #define ATLAS_PIXEL_SIZE 1
 #define ATLAS_TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE)
-#define ATLAS_BUF_SIZE (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE * DIRECT_CODE_POINTS_COUNT)
+#define ATLAS_BUF_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE * DIRECT_CODE_POINTS_COUNT)
 
 typedef enum KEY : uint8_t {
 	KEY_SHIFT,
@@ -110,8 +110,8 @@ typedef struct Line {
 } Line;
 
 typedef struct Storage {
-	size_t buf_size;
 	void *buf;
+	size_t buf_size;
 
 	uint8_t is_initialized;
 } Storage;
@@ -121,13 +121,25 @@ typedef struct CaretPos {
 	uint32_t col;
 } CaretPos;
 
+/**
+ * @brief (0,0) is on the top left corner. Top-To-Bottom.
+ * The byte order in a register (little endian) is AA RR GG BB
+ */
+typedef struct Bitmap {
+	void *buf;
+	size_t buf_size;
+
+	unsigned width_px;
+	unsigned height_px;
+} Bitmap;
+
 typedef struct Atlas {
-	unsigned char buf[ATLAS_BUF_SIZE];
-	size_t buf_count;
+	unsigned char buf[ATLAS_BUF_SIZE_MAX];
+	size_t buf_size;
 } Atlas;
 
 typedef struct Backbuf {
-	unsigned char buf[BACKBUF_SIZE];
+	unsigned char buf[BACKBUF_SIZE_MAX];
 	uint32_t width_px;
 	uint32_t height_px;
 } Backbuf;

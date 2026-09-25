@@ -36,21 +36,8 @@
 #define GREEN_BITS(c) ((c & GREEN_MASK) >> GREEN_SHIFT)
 #define BLUE_BITS(c) ((c & BLUE_MASK) >> BLUE_SHIFT)
 
-/**
- * @brief (0,0) is on the top left corner. Top-To-Bottom.
- * The byte order in a register (little endian) is AA RR GG BB
- */
-typedef struct Bitmap {
-	void *buf;
-	size_t buf_size;
-
-	unsigned width_px;
-	unsigned height_px;
-} Bitmap;
-
 typedef struct WinState {
-	size_t buf_size;
-	void *buf;
+	Storage storage;
 
 	uint8_t is_running;
 } WinState;
@@ -286,18 +273,18 @@ static uint32_t glyph_rasterize(HDC font_dc, uint32_t glyph_code, Arena *arena, 
  * @param green
  * @param blue
  */
-static void backbuf_draw_rectangle(unsigned char *buf, size_t buf_width_px, size_t buf_height_px, float bounds_x_px_min,
-                                   float bounds_y_px_min, float bounds_x_px_max, float bounds_y_px_max, float red,
-                                   float green, float blue)
+static void bitmap_draw_rectangle(Bitmap *bitmap, float bounds_x_px_min, float bounds_y_px_min, float bounds_x_px_max,
+                                  float bounds_y_px_max, float red, float green, float blue)
 {
+	// TODO(fredy): return to use Bitmap?
 	ASSERT(bounds_x_px_min < bounds_x_px_max);
 	ASSERT(bounds_y_px_min < bounds_y_px_max);
 	ASSERT(bounds_x_px_min >= 0.0F);
 	ASSERT(bounds_y_px_min >= 0.0F);
-	ASSERT(bounds_x_px_min < (float)buf_width_px);
-	ASSERT(bounds_y_px_min < (float)buf_height_px);
-	ASSERT(bounds_x_px_max <= (float)buf_width_px);
-	ASSERT(bounds_y_px_max <= (float)buf_height_px);
+	ASSERT(bounds_x_px_min < (float)bitmap->width_px);
+	ASSERT(bounds_y_px_min < (float)bitmap->height_px);
+	ASSERT(bounds_x_px_max <= (float)bitmap->width_px);
+	ASSERT(bounds_y_px_max <= (float)bitmap->height_px);
 
 	size_t bounds_x_idx_min = (unsigned)floorf(bounds_x_px_min);
 	size_t bounds_y_idx_min = (unsigned)floorf(bounds_y_px_min);
@@ -309,9 +296,10 @@ static void backbuf_draw_rectangle(unsigned char *buf, size_t buf_width_px, size
 	uint32_t blue_bits = (uint32_t)roundf(blue * 255.0F);
 	uint32_t color_argb = red_bits << 16UL | green_bits << 8UL | blue_bits;
 
-	size_t pitch_size = buf_width_px * PIXEL_SIZE;
+	size_t pitch_size = bitmap->width_px * (size_t)PIXEL_SIZE;
 
-	unsigned char *pixel_first_byte = buf + (bounds_x_idx_min * PIXEL_SIZE) + (bounds_y_idx_min * pitch_size);
+	unsigned char *pixel_first_byte =
+		(unsigned char *)bitmap->buf + (bounds_x_idx_min * PIXEL_SIZE) + (bounds_y_idx_min * pitch_size);
 	uint32_t *pixel = nullptr;
 	for (size_t y = bounds_y_idx_min; y < bounds_y_idx_max; ++y) {
 		for (size_t x = bounds_x_idx_min; x < bounds_x_idx_max; ++x) {
@@ -445,12 +433,14 @@ static unsigned long WINAPI render_run(void *param)
 	size_t renderer_buf_size = (size_t)ATLAS_TILE_SIZE_MAX * 20;
 	size_t app_buf_size = sizeof(Tix) + renderer_buf_size + BUFFER_POOL_SIZE_MAX;
 
-	BITMAPINFO bitmap_info = { .bmiHeader = {
-								   .biSize = sizeof(BITMAPINFOHEADER),
-								   .biPlanes = 1,
-								   .biBitCount = CHAR_BIT * PIXEL_SIZE,
-								   .biCompression = BI_RGB,
-							   } };
+	BITMAPINFO bitmap_info = {
+		.bmiHeader = {
+			.biSize = sizeof(BITMAPINFOHEADER),
+			.biPlanes = 1,
+			.biBitCount = CHAR_BIT * PIXEL_SIZE,
+			.biCompression = BI_RGB,
+		},
+	};
 
 	void *app_buf =
 		// NOLINTNEXTLINE(performance-no-int-to-ptr): fixed base address for deterministic pointers across runs
@@ -461,22 +451,21 @@ static unsigned long WINAPI render_run(void *param)
 	}
 
 	WinState win_state = {
-		.buf = app_buf,
-		.buf_size = app_buf_size,
+		.storage = {
+			.buf = app_buf,
+			.buf_size = app_buf_size,
+		},
 		.is_running = 1U,
 	};
-	Storage storage = {
-		.buf = (unsigned char *)app_buf,
-		.buf_size = app_buf_size,
-	};
 
-	Tix *tix = (Tix *)storage.buf;
+	Tix *tix = (Tix *)win_state.storage.buf;
 	tix->caret_mode = CARET_MODE_NORMAL;
 	tix->caret_pos.row = 0;
 	tix->caret_pos.col = 0;
 
-	if (!storage.is_initialized) {
-		arena_init(&tix->arena, storage.buf_size - sizeof(Tix), (unsigned char *)storage.buf + sizeof(Tix));
+	if (!win_state.storage.is_initialized) {
+		arena_init(&tix->arena, win_state.storage.buf_size - sizeof(Tix),
+		           (unsigned char *)win_state.storage.buf + sizeof(Tix));
 
 		void *renderer_buf = arena_push(&tix->arena, renderer_buf_size);
 		ASSERT(renderer_buf);
@@ -486,7 +475,7 @@ static unsigned long WINAPI render_run(void *param)
 		ASSERT(buffers_arena_buf);
 		arena_init(&tix->buffers_arena, BUFFER_POOL_SIZE_MAX, buffers_arena_buf);
 
-		storage.is_initialized = 1U;
+		win_state.storage.is_initialized = 1U;
 	}
 
 	// pt: physical unit - 1 point = 1/72 inch
@@ -533,8 +522,8 @@ static unsigned long WINAPI render_run(void *param)
 
 	ASSERT(atlas_tile_size <= ATLAS_TILE_SIZE_MAX);
 
-	tix->atlas.buf_count = (size_t)DIRECT_CODE_POINTS_COUNT * atlas_tile_size;
-	ASSERT(tix->atlas.buf_count <= (size_t)ATLAS_BUF_SIZE);
+	tix->atlas.buf_size = (size_t)DIRECT_CODE_POINTS_COUNT * atlas_tile_size;
+	ASSERT(tix->atlas.buf_size <= (size_t)ATLAS_BUF_SIZE_MAX);
 
 	ArenaMark init_mark = arena_mark(&tix->renderer_arena);
 	for (char p = DIRECT_CODE_POINT_MIN; p <= DIRECT_CODE_POINT_MAX; ++p) {
@@ -807,9 +796,14 @@ static unsigned long WINAPI render_run(void *param)
 		// =============================================================================
 		// Layout
 		// =============================================================================
-		backbuf_draw_rectangle(tix->backbuf.buf, tix->backbuf.width_px, tix->backbuf.height_px, 0.0F, 0.0F,
-		                       (float)tix->backbuf.width_px, (float)tix->backbuf.height_px, RED_BITS(BG_COLOR) / 255.0F,
-		                       GREEN_BITS(BG_COLOR) / 255.0F, BLUE_BITS(BG_COLOR) / 255.0F);
+		Bitmap backbuf = {
+			.buf = tix->backbuf.buf,
+			.buf_size = (size_t)tix->backbuf.width_px * tix->backbuf.height_px * PIXEL_SIZE,
+			.width_px = tix->backbuf.width_px,
+			.height_px = tix->backbuf.height_px,
+		};
+		bitmap_draw_rectangle(&backbuf, 0.0F, 0.0F, (float)tix->backbuf.width_px, (float)tix->backbuf.height_px,
+		                      RED_BITS(BG_COLOR) / 255.0F, GREEN_BITS(BG_COLOR) / 255.0F, BLUE_BITS(BG_COLOR) / 255.0F);
 		unsigned tile_row = 0;
 		for (size_t line_idx = tix->scroll_offset; line_idx < file_lines_count && tile_row < grid_height_tile;
 		     ++line_idx) {
