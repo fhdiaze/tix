@@ -262,44 +262,40 @@ static uint32_t glyph_rasterize(HDC font_dc, uint32_t glyph_code, Arena *arena, 
 // }
 
 /**
- * @brief max_x_px_f and max_y_px_f are not included
+ * @brief Draws a rectangle with the specified color components
  *
- * @param bitmap
- * @param bounds_x_px_min
- * @param bounds_y_px_min
- * @param bounds_x_px_max
- * @param bounds_y_px_max
- * @param red
- * @param green
- * @param blue
+ * @param buf
+ * @param buf_width_px
+ * @param buf_height_px
+ * @param bounds_x_px_min included
+ * @param bounds_y_px_min included
+ * @param bounds_x_px_max not included
+ * @param bounds_y_px_max not included
+ * @param color_argb Color in Alpha,Red,Green,Blue format
  */
-static void bitmap_draw_rectangle(Bitmap *bitmap, float bounds_x_px_min, float bounds_y_px_min, float bounds_x_px_max,
-                                  float bounds_y_px_max, float red, float green, float blue)
+static void bitmap_draw_rectangle(void *buf, size_t buf_width_px, size_t buf_height_px, float bounds_x_px_min,
+                                  float bounds_y_px_min, float bounds_x_px_max, float bounds_y_px_max,
+                                  uint32_t color_argb)
 {
 	// TODO(fredy): return to use Bitmap?
 	ASSERT(bounds_x_px_min < bounds_x_px_max);
 	ASSERT(bounds_y_px_min < bounds_y_px_max);
 	ASSERT(bounds_x_px_min >= 0.0F);
 	ASSERT(bounds_y_px_min >= 0.0F);
-	ASSERT(bounds_x_px_min < (float)bitmap->width_px);
-	ASSERT(bounds_y_px_min < (float)bitmap->height_px);
-	ASSERT(bounds_x_px_max <= (float)bitmap->width_px);
-	ASSERT(bounds_y_px_max <= (float)bitmap->height_px);
+	ASSERT(bounds_x_px_min < (float)buf_width_px);
+	ASSERT(bounds_y_px_min < (float)buf_height_px);
+	ASSERT(bounds_x_px_max <= (float)buf_width_px);
+	ASSERT(bounds_y_px_max <= (float)buf_height_px);
 
 	size_t bounds_x_idx_min = (unsigned)floorf(bounds_x_px_min);
 	size_t bounds_y_idx_min = (unsigned)floorf(bounds_y_px_min);
 	size_t bounds_x_idx_max = (unsigned)ceilf(bounds_x_px_max);
 	size_t bounds_y_idx_max = (unsigned)ceilf(bounds_y_px_max);
 
-	uint32_t red_bits = (uint32_t)roundf(red * 255.0F);
-	uint32_t green_bits = (uint32_t)roundf(green * 255.0F);
-	uint32_t blue_bits = (uint32_t)roundf(blue * 255.0F);
-	uint32_t color_argb = red_bits << 16UL | green_bits << 8UL | blue_bits;
-
-	size_t pitch_size = bitmap->width_px * (size_t)PIXEL_SIZE;
+	size_t pitch_size = buf_width_px * (size_t)PIXEL_SIZE;
 
 	unsigned char *pixel_first_byte =
-		(unsigned char *)bitmap->buf + (bounds_x_idx_min * PIXEL_SIZE) + (bounds_y_idx_min * pitch_size);
+		(unsigned char *)buf + (bounds_x_idx_min * PIXEL_SIZE) + (bounds_y_idx_min * pitch_size);
 	uint32_t *pixel = nullptr;
 	for (size_t y = bounds_y_idx_min; y < bounds_y_idx_max; ++y) {
 		for (size_t x = bounds_x_idx_min; x < bounds_x_idx_max; ++x) {
@@ -796,14 +792,8 @@ static unsigned long WINAPI render_run(void *param)
 		// =============================================================================
 		// Layout
 		// =============================================================================
-		Bitmap backbuf = {
-			.buf = tix->backbuf.buf,
-			.buf_size = (size_t)tix->backbuf.width_px * tix->backbuf.height_px * PIXEL_SIZE,
-			.width_px = tix->backbuf.width_px,
-			.height_px = tix->backbuf.height_px,
-		};
-		bitmap_draw_rectangle(&backbuf, 0.0F, 0.0F, (float)tix->backbuf.width_px, (float)tix->backbuf.height_px,
-		                      RED_BITS(BG_COLOR) / 255.0F, GREEN_BITS(BG_COLOR) / 255.0F, BLUE_BITS(BG_COLOR) / 255.0F);
+		bitmap_draw_rectangle(&tix->backbuf.buf, tix->backbuf.width_px, tix->backbuf.height_px, 0.0F, 0.0F,
+		                      (float)tix->backbuf.width_px, (float)tix->backbuf.height_px, BG_COLOR);
 		unsigned tile_row = 0;
 		for (size_t line_idx = tix->scroll_offset; line_idx < file_lines_count && tile_row < grid_height_tile;
 		     ++line_idx) {
