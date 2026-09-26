@@ -277,7 +277,6 @@ static void bitmap_draw_rectangle(void *buf, size_t buf_width_px, size_t buf_hei
                                   float bounds_y_px_min, float bounds_x_px_max, float bounds_y_px_max,
                                   uint32_t color_argb)
 {
-	// TODO(fredy): return to use Bitmap?
 	ASSERT(bounds_x_px_min < bounds_x_px_max);
 	ASSERT(bounds_y_px_min < bounds_y_px_max);
 	ASSERT(bounds_x_px_min >= 0.0F);
@@ -456,8 +455,8 @@ static unsigned long WINAPI render_run(void *param)
 
 	Tix *tix = (Tix *)win_state.storage.buf;
 	tix->caret_mode = CARET_MODE_NORMAL;
-	tix->caret_pos.row = 0;
-	tix->caret_pos.col = 0;
+	tix->caret.line_idx = 0;
+	tix->caret.col_idx = 0;
 
 	if (!win_state.storage.is_initialized) {
 		arena_init(&tix->arena, win_state.storage.buf_size - sizeof(Tix),
@@ -494,27 +493,27 @@ static unsigned long WINAPI render_run(void *param)
 	TEXTMETRICA text_metrics;
 	GetTextMetricsA(font_dc, &text_metrics);
 
-	unsigned tile_width_px = (unsigned)abs(text_metrics.tmAveCharWidth);
-	unsigned tile_height_px = (unsigned)abs(text_metrics.tmHeight) + (unsigned)abs(text_metrics.tmExternalLeading);
-	unsigned tile_ascent_px = (unsigned)abs(text_metrics.tmAscent); // Includes the internal leading
+	tix->grid.tile_width_px = (unsigned)abs(text_metrics.tmAveCharWidth);
+	tix->grid.tile_height_px = (unsigned)abs(text_metrics.tmHeight) + (unsigned)abs(text_metrics.tmExternalLeading);
+	tix->grid.tile_ascent_px = (unsigned)abs(text_metrics.tmAscent); // Includes the internal leading
 
 	SIZE size;
 	GetTextExtentPoint32W(dc_handle, L"@", 1, &size);
-	tile_width_px = (unsigned)max((long)tile_width_px, size.cx);
-	tile_height_px = (unsigned)max((long)tile_height_px, size.cy);
+	tix->grid.tile_width_px = (unsigned)max((long)tix->grid.tile_width_px, size.cx);
+	tix->grid.tile_height_px = (unsigned)max((long)tix->grid.tile_height_px, size.cy);
 
 	GetTextExtentPoint32W(dc_handle, L"M", 1, &size);
-	tile_width_px = (unsigned)max((long)tile_width_px, size.cx);
-	tile_height_px = (unsigned)max((long)tile_height_px, size.cy);
+	tix->grid.tile_width_px = (unsigned)max((long)tix->grid.tile_width_px, size.cx);
+	tix->grid.tile_height_px = (unsigned)max((long)tix->grid.tile_height_px, size.cy);
 
 	GetTextExtentPoint32W(dc_handle, L"g", 1, &size);
-	tile_width_px = (unsigned)max((long)tile_width_px, size.cx);
-	tile_height_px = (unsigned)max((long)tile_height_px, size.cy);
+	tix->grid.tile_width_px = (unsigned)max((long)tix->grid.tile_width_px, size.cx);
+	tix->grid.tile_height_px = (unsigned)max((long)tix->grid.tile_height_px, size.cy);
 
-	ASSERT(tile_width_px <= TILE_SIDE_PX_MAX);
-	ASSERT(tile_height_px <= TILE_SIDE_PX_MAX);
+	ASSERT(tix->grid.tile_width_px <= TILE_SIDE_PX_MAX);
+	ASSERT(tix->grid.tile_height_px <= TILE_SIDE_PX_MAX);
 
-	unsigned atlas_tile_size = tile_width_px * tile_height_px * ATLAS_PIXEL_SIZE;
+	unsigned atlas_tile_size = tix->grid.tile_width_px * tix->grid.tile_height_px * ATLAS_PIXEL_SIZE;
 
 	ASSERT(atlas_tile_size <= ATLAS_TILE_SIZE_MAX);
 
@@ -524,9 +523,9 @@ static unsigned long WINAPI render_run(void *param)
 	ArenaMark init_mark = arena_mark(&tix->renderer_arena);
 	for (char p = DIRECT_CODE_POINT_MIN; p <= DIRECT_CODE_POINT_MAX; ++p) {
 		GlyphIdx glyph_idx = { .value = (uint32_t)p - DIRECT_CODE_POINT_MIN };
-		glyph_rasterize(font_dc, (uint32_t)p, &tix->renderer_arena, tile_ascent_px,
-		                tix->atlas.buf + (size_t)(glyph_idx.value * atlas_tile_size), tile_width_px, tile_height_px,
-		                tile_width_px);
+		glyph_rasterize(font_dc, (uint32_t)p, &tix->renderer_arena, tix->grid.tile_ascent_px,
+		                tix->atlas.buf + (size_t)(glyph_idx.value * atlas_tile_size), tix->grid.tile_width_px,
+		                tix->grid.tile_height_px, tix->grid.tile_width_px);
 		arena_rewind(&init_mark);
 	}
 
@@ -535,8 +534,8 @@ static unsigned long WINAPI render_run(void *param)
 	ReadFileResult file = {};
 	FILETIME file_previous_write_time = {};
 
-	constexpr uint32_t lines_count_max = 1000000;
-	Line *file_lines = ARENA_PUSH_ARRAY(&tix->buffers_arena, Line, lines_count_max);
+	constexpr uint32_t file_lines_count_max = 1000000;
+	Line *file_lines = ARENA_PUSH_ARRAY(&tix->buffers_arena, Line, file_lines_count_max);
 	size_t file_lines_count = 0;
 
 	LARGE_INTEGER performance_frequency;
@@ -556,6 +555,10 @@ static unsigned long WINAPI render_run(void *param)
 		// TODO(fredy): limit the iterations of this loop
 		// TODO(fredy): deal with WM_DPICHANGED and WM_GETDPISCALEDSIZE
 		while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+			size_t key_stroke_info = (size_t)msg.lParam;
+			uint32_t was_down = (key_stroke_info & (1U << 30U)) != 0;
+			uint32_t is_down = (key_stroke_info & (1UL << 31UL)) == 0;
+
 			switch (msg.message) {
 			case WM_QUIT: {
 				// The WM_QUIT message is not associated with a window and therefore will never be received through a
@@ -570,20 +573,31 @@ static unsigned long WINAPI render_run(void *param)
 			case WM_SYSKEYUP:
 			case WM_KEYDOWN:
 			case WM_KEYUP: {
+				size_t vk_code = (size_t)msg.wParam;
+
+				if (vk_code == VK_CONTROL) {
+					keyboard_process_message(&tix_input.keys[KEY_CTRL], was_down, is_down);
+				}
 			} break;
 			case WM_CHAR: {
 				char c = (char)msg.wParam;
-				size_t key_stroke_info = (size_t)msg.lParam;
-				uint32_t was_down = (key_stroke_info & (1U << 30U)) != 0;
-				uint32_t is_down = (key_stroke_info & (1UL << 31UL)) == 0;
 				if (c == 'j') {
-					keyboard_process_message(&tix_input.move_down, was_down, is_down);
+					keyboard_process_message(&tix_input.keys[KEY_J], was_down, is_down);
 				} else if (c == 'k') {
-					keyboard_process_message(&tix_input.move_up, was_down, is_down);
+					keyboard_process_message(&tix_input.keys[KEY_K], was_down, is_down);
 				} else if (c == 'h') {
-					keyboard_process_message(&tix_input.move_left, was_down, is_down);
+					keyboard_process_message(&tix_input.keys[KEY_H], was_down, is_down);
 				} else if (c == 'l') {
-					keyboard_process_message(&tix_input.move_right, was_down, is_down);
+					keyboard_process_message(&tix_input.keys[KEY_L], was_down, is_down);
+				} else if (c == 'g') {
+					keyboard_process_message(&tix_input.keys[KEY_G], was_down, is_down);
+				} else if (c == 'd') {
+					keyboard_process_message(&tix_input.keys[KEY_D], was_down, is_down);
+				} else if (c == 'u') {
+					keyboard_process_message(&tix_input.keys[KEY_U], was_down, is_down);
+				} else if (c == 'G') {
+					keyboard_process_message(&tix_input.keys[KEY_G], was_down, is_down);
+					tix_input.keys[KEY_SHIFTED].ended_down = 1U;
 				}
 			} break;
 			case WM_SIZE: {
@@ -610,21 +624,34 @@ static unsigned long WINAPI render_run(void *param)
 		RECT client_rect;
 		GetClientRect(window, &client_rect);
 
-		ASSERT(client_rect.right - client_rect.left >= 0);
-		ASSERT(client_rect.bottom - client_rect.top >= 0);
+		uint32_t new_width_px = 0U;
+		uint32_t new_height_px = 0U;
 
-		unsigned new_width_px = (unsigned)(client_rect.right - client_rect.left);
-		unsigned new_height_px = (unsigned)(client_rect.bottom - client_rect.top);
+		if (client_rect.left < client_rect.right && client_rect.top < client_rect.bottom) {
+			ASSERT(client_rect.right - client_rect.left > 0);
+			ASSERT(client_rect.bottom - client_rect.top > 0);
+			new_width_px = (uint32_t)(client_rect.right - client_rect.left);
+			new_height_px = (uint32_t)(client_rect.bottom - client_rect.top);
+		}
 
 		if (new_width_px != tix->backbuf.width_px || new_height_px != tix->backbuf.height_px) {
-			if (new_width_px < WINDOW_WIDTH_PX_MAX && new_height_px < WINDOW_HEIGHT_PX_MAX) {
+			if (new_width_px * new_height_px * PIXEL_SIZE <= BACKBUF_SIZE_MAX) {
 				tix->backbuf.width_px = new_width_px;
 				tix->backbuf.height_px = new_height_px;
+				tix->grid.tile_count_x = tix->backbuf.width_px / tix->grid.tile_width_px;
+				tix->grid.tile_count_y =
+					(uint32_t)floorf((float)tix->backbuf.height_px / (float)tix->grid.tile_height_px);
 			} else {
 				LOG_ERROR("unable to allocate %zu bytes for the backbuffer",
 				          (size_t)new_width_px * new_height_px * PIXEL_SIZE);
 				ASSERT(false && "unable to allocate memory for the backbuffer");
 			}
+		}
+
+		ASSERT(tix->backbuf.width_px * tix->backbuf.height_px * PIXEL_SIZE <= BACKBUF_SIZE_MAX);
+
+		if (tix->backbuf.width_px == 0 || tix->backbuf.height_px == 0) {
+			continue;
 		}
 
 		// =============================================================================
@@ -675,7 +702,7 @@ static unsigned long WINAPI render_run(void *param)
 			size_t line_start_idx = 0;
 			size_t last_byte_idx = 0;
 
-			while (file_lines_count < lines_count_max && remaining_byte_count) {
+			while (file_lines_count < file_lines_count_max && remaining_byte_count) {
 				__m256i contains_complex = _mm256_setzero_si256();
 
 				while (remaining_byte_count > 32) {
@@ -728,37 +755,60 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		}
 
-		size_t grid_height_tile = (size_t)floorf((float)tix->backbuf.height_px / (float)tile_height_px);
-		size_t grid_width_tile = tix->backbuf.width_px / tile_width_px;
-
 		// Move cursor
 		uint32_t was_caret_moved = 0U;
-		if (tix_input.move_up.ended_down && tix->caret_pos.row > 0) {
-			--tix->caret_pos.row;
+		if (tix_input.keys[KEY_K].ended_down && tix->caret.line_idx > 0) {
+			--tix->caret.line_idx;
 			was_caret_moved = 1U;
 		}
 
-		if (tix_input.move_down.ended_down && tix->caret_pos.row + 1 < file_lines_count) {
-			++tix->caret_pos.row;
+		if (tix_input.keys[KEY_D].ended_down && tix_input.keys[KEY_CTRL].ended_down &&
+		    !tix_input.keys[KEY_SHIFTED].ended_down) {
+			tix->caret.line_idx += 10;
+		}
+
+		if (tix_input.keys[KEY_U].ended_down && tix_input.keys[KEY_CTRL].ended_down &&
+		    tix_input.keys[KEY_SHIFTED].ended_down) {
+			tix->caret.line_idx -= min(tix->caret.line_idx, 10);
+		}
+
+		if (tix_input.keys[KEY_G].ended_down) {
+			if (tix_input.keys[KEY_G].half_transition_count > 1 ||
+			    (tix->stack_key_count == 1 && tix->stack_key_codes[0] == KEY_G)) {
+				tix->caret.line_idx = 0U;
+				was_caret_moved = 1U;
+				tix->stack_key_count = 0U;
+			} else if (tix_input.keys[KEY_SHIFTED].ended_down) {
+				tix->caret.line_idx = file_lines_count > 0 ? file_lines_count - 1 : 0;
+				was_caret_moved = 1U;
+			} else {
+				tix->stack_key_codes[0] = KEY_G;
+				tix->stack_key_count = 1U;
+			}
+		}
+
+		if (tix_input.keys[KEY_J].ended_down && tix->caret.line_idx + 1 < file_lines_count) {
+			++tix->caret.line_idx;
 			was_caret_moved = 1U;
 		}
 
-		size_t new_line_col = file_lines[tix->caret_pos.row].newline_idx - file_lines[tix->caret_pos.row].start_idx;
-		if (new_line_col > 0 && *((unsigned char *)file.buf + file_lines[tix->caret_pos.row].newline_idx - 1) == '\r') {
+		size_t new_line_col = file_lines[tix->caret.line_idx].newline_idx - file_lines[tix->caret.line_idx].start_idx;
+		if (new_line_col > 0 &&
+		    *((unsigned char *)file.buf + file_lines[tix->caret.line_idx].newline_idx - 1) == '\r') {
 			--new_line_col;
 		}
 
-		if (tix_input.move_left.ended_down && tix->caret_pos.col > 0) {
-			--tix->caret_pos.col;
+		if (tix_input.keys[KEY_H].ended_down && tix->caret.col_idx > 0) {
+			--tix->caret.col_idx;
 			was_caret_moved = 1U;
 		}
 
-		if (tix_input.move_right.ended_down && tix->caret_pos.col + 1 < new_line_col) {
-			++tix->caret_pos.col;
+		if (tix_input.keys[KEY_L].ended_down && tix->caret.col_idx + 1 < new_line_col) {
+			++tix->caret.col_idx;
 			was_caret_moved = 1U;
 		}
 
-		size_t caret_col = tix->caret_pos.col;
+		size_t caret_col = tix->caret.col_idx;
 		if (caret_col >= new_line_col) {
 			if (new_line_col > 0) {
 				caret_col = new_line_col - 1;
@@ -767,23 +817,25 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		}
 
-		if (was_caret_moved && tix->caret_pos.row < tix->scroll_offset) {
-			tix->scroll_offset = tix->caret_pos.row;
+		if (was_caret_moved && tix->caret.line_idx < tix->scroll_idx) {
+			tix->scroll_idx = tix->caret.line_idx;
 		}
 
-		if (was_caret_moved && tix->caret_pos.row >= tix->scroll_offset + grid_height_tile) {
-			tix->scroll_offset += tix->scroll_offset + grid_height_tile - tix->caret_pos.row + 1;
+		if (was_caret_moved && tix->caret.line_idx >= tix->scroll_idx + tix->grid.tile_count_y) {
+			tix->scroll_idx = tix->caret.line_idx - tix->grid.tile_count_y + 1;
 		}
 
 		// Process mouse wheel
-		int64_t new_scroll_offset = (int64_t)tix->scroll_offset;
-		new_scroll_offset -= LINES_PER_NOTCH * (int64_t)tix_input.mouse_notches;
-		new_scroll_offset = min(new_scroll_offset, (int64_t)file_lines_count - 1);
-		new_scroll_offset = max(new_scroll_offset, 0);
+		if (tix_input.mouse_notches != 0) {
+			int64_t new_scroll_offset = (int64_t)tix->scroll_idx;
+			new_scroll_offset -= LINES_PER_NOTCH * (int64_t)tix_input.mouse_notches;
+			new_scroll_offset = min(new_scroll_offset, (int64_t)file_lines_count - 1);
+			new_scroll_offset = max(new_scroll_offset, 0);
 
-		ASSERT(new_scroll_offset >= 0);
+			ASSERT(new_scroll_offset >= 0);
 
-		tix->scroll_offset = (size_t)new_scroll_offset;
+			tix->scroll_idx = (size_t)new_scroll_offset;
+		}
 
 		// =============================================================================
 		// Segmentation
@@ -795,7 +847,7 @@ static unsigned long WINAPI render_run(void *param)
 		bitmap_draw_rectangle(&tix->backbuf.buf, tix->backbuf.width_px, tix->backbuf.height_px, 0.0F, 0.0F,
 		                      (float)tix->backbuf.width_px, (float)tix->backbuf.height_px, BG_COLOR);
 		unsigned tile_row = 0;
-		for (size_t line_idx = tix->scroll_offset; line_idx < file_lines_count && tile_row < grid_height_tile;
+		for (size_t line_idx = tix->scroll_idx; line_idx < file_lines_count && tile_row < tix->grid.tile_count_y;
 		     ++line_idx) {
 			// =============================================================================
 			// Shaping
@@ -804,17 +856,17 @@ static unsigned long WINAPI render_run(void *param)
 			// Sometimes multiple codepoints are merged into one glyph
 
 			unsigned tile_col = 0;
-			unsigned tile_min_y_px = tile_height_px * tile_row;
+			unsigned tile_min_y_px = tix->grid.tile_height_px * tile_row;
 			char *p = (char *)file.buf + file_lines[line_idx].start_idx;
 			GlyphIdx glyph_idx = {};
 			unsigned char *glyph_buf = nullptr;
 			uint32_t bg_color = BG_COLOR;
 			uint32_t fg_color = FG_COLOR;
-			while (p <= (char *)file.buf + file_lines[line_idx].newline_idx && tile_col < grid_width_tile) {
-				unsigned tile_min_x_px = tile_col * tile_width_px;
+			while (p <= (char *)file.buf + file_lines[line_idx].newline_idx && tile_col < tix->grid.tile_count_x) {
+				unsigned tile_min_x_px = tile_col * tix->grid.tile_width_px;
 				char c = *p;
 
-				if (tile_col == caret_col && line_idx == tix->caret_pos.row) {
+				if (tile_col == caret_col && line_idx == tix->caret.line_idx) {
 					fg_color = BG_COLOR;
 					bg_color = FG_COLOR;
 
@@ -838,8 +890,8 @@ static unsigned long WINAPI render_run(void *param)
 					unsigned char *coverage_ptr = glyph_buf;
 
 					// TODO(fredy): should I use SIMD here?
-					for (size_t y = 0; y < tile_height_px; ++y) {
-						for (size_t x = 0; x < tile_width_px; ++x) {
+					for (size_t y = 0; y < tix->grid.tile_height_px; ++y) {
+						for (size_t x = 0; x < tix->grid.tile_width_px; ++x) {
 							float blend_factor = (float)(*coverage_ptr) / 64.0F;
 
 							// blue
@@ -866,7 +918,7 @@ static unsigned long WINAPI render_run(void *param)
 							++coverage_ptr;
 						}
 
-						dst_px_ptr += backbuf_pitch_size - (size_t)tile_width_px * PIXEL_SIZE;
+						dst_px_ptr += backbuf_pitch_size - (size_t)tix->grid.tile_width_px * PIXEL_SIZE;
 
 						// bitmap_draw_border(&backbuf, (float)cell_min_x_px, (float)cell_min_y_px,
 						//                    (float)cell_blit_width_px, (float)cell_blit_height_px,

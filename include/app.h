@@ -14,14 +14,12 @@
 #endif // MEMORY_BASE_ADDRESS
 
 #define PIXEL_SIZE 4
-#define WINDOW_WIDTH_PX_MAX 7680
-#define WINDOW_HEIGHT_PX_MAX 4320
-#define BACKBUF_SIZE_MAX (WINDOW_WIDTH_PX_MAX * WINDOW_HEIGHT_PX_MAX * PIXEL_SIZE)
+#define BACKBUF_SIZE_MAX (7680 * 4320 * PIXEL_SIZE)
 #define BUFFER_POOL_SIZE_MAX GB_TO_BYTE(3ULL)
 #define LINES_PER_NOTCH 3
 #define POINTS_PER_INCH 72
 #define TILE_SIDE_PX_MAX 256
-#define KEY_STACK_COUNT_MAX 256
+#define KEY_STACK_COUNT_MAX 8
 #define FILE_PATH_SIZE_MAX 4096
 #define DIRECT_CODE_POINT_MIN 32
 #define DIRECT_CODE_POINT_MAX 126
@@ -31,16 +29,17 @@
 #define ATLAS_BUF_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE * DIRECT_CODE_POINTS_COUNT)
 
 typedef enum KEY : uint8_t {
-	KEY_SHIFT,
-	KEY_CAPS,
-	KEY_L_CTRL,
-	KEY_R_CTRL,
+	KEY_SHIFTED,
+	KEY_CTRL,
 
+	KEY_D,
 	KEY_G,
+	KEY_H,
 	KEY_J,
 	KEY_K,
 	KEY_L,
-	KEY_H,
+	KEY_U,
+	KEY_W,
 
 	KEY_USCORE,
 
@@ -54,29 +53,15 @@ typedef struct KeyState {
 } KeyState;
 
 typedef struct TixInput {
-	float time_delta_s;
-
-	unsigned mouse_x;
-	unsigned mouse_y;
+	uint32_t mouse_x;
+	uint32_t mouse_y;
 
 	/**
 	 * @brief A "notch" refers to one discrete click/detent of a physical mouse wheel
 	 */
-	signed mouse_notches;
+	int32_t mouse_notches;
 
-	KEY key_stack[KEY_STACK_COUNT_MAX];
-	KeyState key_states[KEY_COUNT];
-
-	union {
-		KeyState keys[KEY_COUNT];
-		struct {
-			KeyState move_up;
-			KeyState move_down;
-			KeyState move_left;
-			KeyState move_right;
-			KeyState scape;
-		};
-	};
+	KeyState keys[KEY_COUNT];
 } TixInput;
 
 typedef enum ContextMode : uint8_t {
@@ -117,8 +102,8 @@ typedef struct Storage {
 } Storage;
 
 typedef struct CaretPos {
-	uint32_t row;
-	uint32_t col;
+	size_t line_idx;
+	size_t col_idx;
 } CaretPos;
 
 /**
@@ -144,18 +129,32 @@ typedef struct Backbuf {
 	uint32_t height_px;
 } Backbuf;
 
+typedef struct TileGrid {
+	uint32_t tile_width_px;
+	uint32_t tile_height_px;
+	uint32_t tile_ascent_px;
+
+	uint32_t tile_count_x;
+	uint32_t tile_count_y;
+} TileGrid;
+
 typedef struct Tix {
 	Arena arena;
 	Arena renderer_arena;
 	Arena buffers_arena;
 
-	size_t scroll_offset;
+	KEY stack_key_codes[KEY_STACK_COUNT_MAX];
+	KeyState stack_key_states[KEY_STACK_COUNT_MAX];
+	uint16_t stack_key_count;
+
+	size_t scroll_idx;
 	size_t lines_count;
 
+	TileGrid grid;
 	Atlas atlas;
 	Backbuf backbuf;
 
-	CaretPos caret_pos;
+	CaretPos caret;
 
 	ContextMode context_mode;
 	CaretMode caret_mode;
