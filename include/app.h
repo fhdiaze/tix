@@ -29,19 +29,113 @@
 #define ATLAS_BUF_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE * DIRECT_CODE_POINTS_COUNT)
 
 typedef enum KEY : uint8_t {
-	KEY_SHIFTED,
-	KEY_CTRL,
+	KEY_SP,
+	KEY_EXCL,
+	KEY_QUOTE,
+	KEY_NUM,
+	KEY_DOLLAR,
+	KEY_PERCNT,
+	KEY_AMP,
+	KEY_APOS,
+	KEY_LPAREN,
+	KEY_RPAREN,
+	KEY_AST,
+	KEY_PLUS,
+	KEY_COMMA,
+	KEY_DASH,
+	KEY_PERIOD,
+	KEY_SLASH,
 
+	KEY_ZERO,
+	KEY_ONE,
+	KEY_TWO,
+	KEY_THREE,
+	KEY_FOUR,
+	KEY_FIVE,
+	KEY_SIX,
+	KEY_SEVEN,
+	KEY_EIGHT,
+	KEY_NINE,
+
+	KEY_COLON,
+	KEY_SEMI,
+	KEY_LT,
+	KEY_EQ,
+	KEY_GT,
+	KEY_QUEST,
+	KEY_COMMAT,
+
+	KEY_UA,
+	KEY_UB,
+	KEY_UC,
+	KEY_UD,
+	KEY_UE,
+	KEY_UF,
+	KEY_UG,
+	KEY_UH,
+	KEY_UI,
+	KEY_UJ,
+	KEY_UK,
+	KEY_UL,
+	KEY_UM,
+	KEY_UN,
+	KEY_UO,
+	KEY_UP,
+	KEY_UQ,
+	KEY_UR,
+	KEY_US,
+	KEY_UT,
+	KEY_UU,
+	KEY_UV,
+	KEY_UW,
+	KEY_UX,
+	KEY_UY,
+	KEY_UZ,
+
+	KEY_LSQB,
+	KEY_BSLASH,
+	KEY_RSQB,
+	KEY_HAT,
+	KEY_LOWBAR,
+	KEY_GRAVE,
+
+	KEY_A,
+	KEY_B,
+	KEY_C,
 	KEY_D,
+	KEY_E,
+	KEY_F,
 	KEY_G,
 	KEY_H,
+	KEY_I,
 	KEY_J,
 	KEY_K,
 	KEY_L,
+	KEY_M,
+	KEY_N,
+	KEY_O,
+	KEY_P,
+	KEY_Q,
+	KEY_R,
+	KEY_S,
+	KEY_T,
 	KEY_U,
+	KEY_V,
 	KEY_W,
+	KEY_X,
+	KEY_Y,
+	KEY_Z,
 
-	KEY_USCORE,
+	KEY_LCUB,
+	KEY_PIPE,
+	KEY_RCUB,
+	KEY_TILDE,
+	KEY_DEL,
+
+	KEY_SHIFT,
+	KEY_CTRL,
+	KEY_RETURN,
+	KEY_ESC,
 
 	KEY_COUNT,
 } KEY;
@@ -101,10 +195,11 @@ typedef struct Storage {
 	uint8_t is_initialized;
 } Storage;
 
-typedef struct CaretPos {
+typedef struct Caret {
 	size_t line_idx;
 	size_t col_idx;
-} CaretPos;
+	uint32_t flags;
+} Caret;
 
 /**
  * @brief (0,0) is on the top left corner. Top-To-Bottom.
@@ -154,7 +249,7 @@ typedef struct Tix {
 	Atlas atlas;
 	Backbuf backbuf;
 
-	CaretPos caret;
+	Caret caret;
 
 	ContextMode context_mode;
 	CaretMode caret_mode;

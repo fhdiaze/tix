@@ -559,6 +559,9 @@ static unsigned long WINAPI render_run(void *param)
 			uint32_t was_down = (key_stroke_info & (1U << 30U)) != 0;
 			uint32_t is_down = (key_stroke_info & (1UL << 31UL)) == 0;
 
+			keyboard_process_message(&tix_input.keys[KEY_CTRL], 0U, GetKeyState(VK_CONTROL) < 0);
+			keyboard_process_message(&tix_input.keys[KEY_SHIFT], 0U, GetKeyState(VK_SHIFT) < 0);
+
 			switch (msg.message) {
 			case WM_QUIT: {
 				// The WM_QUIT message is not associated with a window and therefore will never be received through a
@@ -573,31 +576,27 @@ static unsigned long WINAPI render_run(void *param)
 			case WM_SYSKEYUP:
 			case WM_KEYDOWN:
 			case WM_KEYUP: {
-				size_t vk_code = (size_t)msg.wParam;
-
-				if (vk_code == VK_CONTROL) {
-					keyboard_process_message(&tix_input.keys[KEY_CTRL], was_down, is_down);
+				if (tix_input.keys[KEY_CTRL].ended_down) {
+					size_t vk_code = (size_t)msg.wParam;
+					if (vk_code == VK_SPACE) {
+						keyboard_process_message(&tix_input.keys[KEY_SP], was_down, is_down);
+					} else if (vk_code == VK_RETURN) {
+						keyboard_process_message(&tix_input.keys[KEY_RETURN], was_down, is_down);
+					} else if (vk_code >= 'A' && vk_code <= 'Z') {
+						KEY key = (KEY)vk_code - VK_SPACE + KEY_A - KEY_UA;
+						ASSERT(key >= KEY_A);
+						ASSERT(key <= KEY_Z);
+						keyboard_process_message(&tix_input.keys[key], was_down, is_down);
+					}
 				}
 			} break;
 			case WM_CHAR: {
 				char c = (char)msg.wParam;
-				if (c == 'j') {
-					keyboard_process_message(&tix_input.keys[KEY_J], was_down, is_down);
-				} else if (c == 'k') {
-					keyboard_process_message(&tix_input.keys[KEY_K], was_down, is_down);
-				} else if (c == 'h') {
-					keyboard_process_message(&tix_input.keys[KEY_H], was_down, is_down);
-				} else if (c == 'l') {
-					keyboard_process_message(&tix_input.keys[KEY_L], was_down, is_down);
-				} else if (c == 'g') {
-					keyboard_process_message(&tix_input.keys[KEY_G], was_down, is_down);
-				} else if (c == 'd') {
-					keyboard_process_message(&tix_input.keys[KEY_D], was_down, is_down);
-				} else if (c == 'u') {
-					keyboard_process_message(&tix_input.keys[KEY_U], was_down, is_down);
-				} else if (c == 'G') {
-					keyboard_process_message(&tix_input.keys[KEY_G], was_down, is_down);
-					tix_input.keys[KEY_SHIFTED].ended_down = 1U;
+				if (c >= ' ' && c <= '~') {
+					KEY key = (KEY)(c - ' ');
+					ASSERT(key >= KEY_SP);
+					ASSERT(key <= KEY_TILDE);
+					keyboard_process_message(&tix_input.keys[key], was_down, is_down);
 				}
 			} break;
 			case WM_SIZE: {
@@ -755,21 +754,27 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		}
 
-		// Move cursor
+		// Move caret
 		uint32_t was_caret_moved = 0U;
 		if (tix_input.keys[KEY_K].ended_down && tix->caret.line_idx > 0) {
 			--tix->caret.line_idx;
 			was_caret_moved = 1U;
 		}
 
-		if (tix_input.keys[KEY_D].ended_down && tix_input.keys[KEY_CTRL].ended_down &&
-		    !tix_input.keys[KEY_SHIFTED].ended_down) {
-			tix->caret.line_idx += 10;
+		if (tix_input.keys[KEY_J].ended_down && tix->caret.line_idx + 1 < file_lines_count) {
+			++tix->caret.line_idx;
+			was_caret_moved = 1U;
 		}
 
-		if (tix_input.keys[KEY_U].ended_down && tix_input.keys[KEY_CTRL].ended_down &&
-		    tix_input.keys[KEY_SHIFTED].ended_down) {
+		if (tix_input.keys[KEY_U].ended_down && tix_input.keys[KEY_CTRL].ended_down) {
 			tix->caret.line_idx -= min(tix->caret.line_idx, 10);
+			was_caret_moved = 1U;
+		}
+
+		if (tix_input.keys[KEY_D].ended_down && tix_input.keys[KEY_CTRL].ended_down) {
+			size_t delta = file_lines_count - tix->caret.line_idx;
+			tix->caret.line_idx += delta > 1 ? min(delta - 1, 10) : 0;
+			was_caret_moved = 1U;
 		}
 
 		if (tix_input.keys[KEY_G].ended_down) {
@@ -778,17 +783,14 @@ static unsigned long WINAPI render_run(void *param)
 				tix->caret.line_idx = 0U;
 				was_caret_moved = 1U;
 				tix->stack_key_count = 0U;
-			} else if (tix_input.keys[KEY_SHIFTED].ended_down) {
-				tix->caret.line_idx = file_lines_count > 0 ? file_lines_count - 1 : 0;
-				was_caret_moved = 1U;
 			} else {
 				tix->stack_key_codes[0] = KEY_G;
 				tix->stack_key_count = 1U;
 			}
 		}
 
-		if (tix_input.keys[KEY_J].ended_down && tix->caret.line_idx + 1 < file_lines_count) {
-			++tix->caret.line_idx;
+		if (tix_input.keys[KEY_UG].ended_down) {
+			tix->caret.line_idx = file_lines_count > 0 ? file_lines_count - 1 : 0;
 			was_caret_moved = 1U;
 		}
 
@@ -836,6 +838,8 @@ static unsigned long WINAPI render_run(void *param)
 
 			tix->scroll_idx = (size_t)new_scroll_offset;
 		}
+
+		ASSERT(tix->caret.line_idx < file_lines_count);
 
 		// =============================================================================
 		// Segmentation
