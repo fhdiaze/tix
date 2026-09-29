@@ -1,6 +1,8 @@
 -std=c23
 -fbuiltin
 -fuse-ld=lld
+-fstack-protector-strong
+-mguard=cf
 -D_CRT_SECURE_NO_WARNINGS
 
 -Wall
@@ -8,6 +10,8 @@
 -Wsign-compare
 -Wconversion
 -Wsign-conversion
+-Warray-bounds
+-Wshift-overflow
 -Wpadded
 -Wcast-qual
 -Wformat=2
@@ -17,6 +21,7 @@
 -Wimplicit-fallthrough
 -Wint-to-pointer-cast
 -Wint-to-void-pointer-cast
+-Wsizeof-pointer-memaccess
 -Wint-conversion
 -Wswitch-enum
 -Wunused
@@ -34,6 +39,7 @@
 -Wenum-float-conversion
 -Wanon-enum-enum-conversion
 
+-Wl,/guard:cf
 -Wl,/opt:ref
 -Wl,/opt:icf
 -Wl,/INCREMENTAL:NO

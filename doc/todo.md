@@ -12,7 +12,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 Goal: own the pixel buffer and present it ourselves, replacing the `TextOutA`
 spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 
-- [ ] **Allocate the backbuffer once, at a generous size.** `VirtualAlloc` a
+- [x] **Allocate the backbuffer once, at a generous size.** `VirtualAlloc` a
       32bpp BGRA, top-down block sized to an upper bound (primary monitor or
       virtual-desktop resolution), not the current client area. Fill in the
       existing `WinBitmap` struct (`top_left_px`, `pitch_bytes = width * 4`,
@@ -38,7 +38,10 @@ spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 ## Stage 1 — File → lines → cell grid
 
 - [x] Line index: scan for line breaks, store start/end offset per line.
-- [ ] Memory allocation strategy: perm (Tix, ), font(atlas, tiles, scratch), files, scratch
+- [ ] Memory allocation strategy: perm (Tix, ), font(atlas, tiles, scratch),
+      files, scratch. For buffers we can have blocks of lines, like a pool allocator.
+      size=sizeof(Line)*count where count is power of 2.
+      Or, we can push four times the size of the file: half for the file content half for lines.
 - [ ] Define the `tile` struct (glyph_idx, fg, bg, flags).
 - [ ] Allocate the tile grid sized in columns/rows (not pixels).
 - [x] Layout pass: fill visible lines into the grid.

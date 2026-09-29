@@ -336,30 +336,30 @@ inline Vtwo vtwo_normalize(Vtwo a)
 typedef struct Arena {
 	size_t buf_size_byte;
 	unsigned char *buf;
-	size_t offset_byte;
+	size_t offset;
 } Arena;
 
 typedef struct ArenaMark {
 	Arena *arena;
-	size_t offset_byte;
+	size_t offset;
 } ArenaMark;
 
-void arena_init(Arena *restrict arena, const size_t buf_size_byte, unsigned char *const restrict buf)
+void arena_init(Arena *restrict arena, const size_t buf_size, unsigned char *const restrict buf)
 {
-	arena->buf_size_byte = buf_size_byte;
+	arena->buf_size_byte = buf_size;
 	arena->buf = buf;
-	arena->offset_byte = 0;
+	arena->offset = 0;
 }
 
 void *arena_push(Arena *arena, size_t size_byte)
 {
 	void *result = nullptr;
 
-	ASSERT(arena->offset_byte + size_byte <= arena->buf_size_byte);
+	ASSERT(arena->offset + size_byte <= arena->buf_size_byte);
 
-	if (arena->offset_byte + size_byte <= arena->buf_size_byte) {
-		result = arena->buf + arena->offset_byte;
-		arena->offset_byte += size_byte;
+	if (arena->offset + size_byte <= arena->buf_size_byte) {
+		result = arena->buf + arena->offset;
+		arena->offset += size_byte;
 	}
 
 	return result;
@@ -377,14 +377,14 @@ void *arena_push_zero(Arena *arena, size_t size_byte)
 
 void arena_clear(Arena *arena)
 {
-	arena->offset_byte = 0;
+	arena->offset = 0;
 }
 
 ArenaMark arena_mark(Arena *arena)
 {
 	ArenaMark mark = {
 		.arena = arena,
-		.offset_byte = arena->offset_byte,
+		.offset = arena->offset,
 	};
 
 	return mark;
@@ -392,7 +392,7 @@ ArenaMark arena_mark(Arena *arena)
 
 void arena_rewind(ArenaMark *mark)
 {
-	mark->arena->offset_byte = mark->offset_byte;
+	mark->arena->offset = mark->offset;
 }
 
 // =============================================================================
