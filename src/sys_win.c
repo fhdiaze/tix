@@ -142,7 +142,7 @@ static uint32_t mem_copy_rect(unsigned char *src_buf, size_t src_size_x, size_t 
  *
  * @return uint32_t 0 on success. Non-zero on failure, e.g. if the allocation fails.
  */
-static uint32_t glyph_rasterize(HDC font_dc, uint32_t glyph_code, Arena *arena, unsigned ascent_size,
+static uint32_t glyph_rasterize(HDC font_dc, uint32_t code_point, Arena *arena, unsigned ascent_size,
                                 unsigned char *dst_buf, size_t dst_size_x, size_t dst_size_y, size_t dst_pitch_size)
 {
 	uint32_t error_code = 0U;
@@ -154,12 +154,12 @@ static uint32_t glyph_rasterize(HDC font_dc, uint32_t glyph_code, Arena *arena, 
 	GLYPHMETRICS glyph_metrics;
 	DWORD glyph_buf_byte_count = 0;
 	DWORD glyph_buf_size =
-		GetGlyphOutlineA(font_dc, glyph_code, GGO_GRAY8_BITMAP, &glyph_metrics, 0, nullptr, &identity);
+		GetGlyphOutlineA(font_dc, code_point, GGO_GRAY8_BITMAP, &glyph_metrics, 0, nullptr, &identity);
 	if (glyph_buf_size != GDI_ERROR && glyph_buf_size && glyph_buf_size <= dst_size_x * dst_size_y) {
 		glyph_buf = arena_push_zero(arena, glyph_buf_size);
 		ASSERT(glyph_buf);
 		if (glyph_buf) {
-			glyph_buf_byte_count = GetGlyphOutlineA(font_dc, glyph_code, GGO_GRAY8_BITMAP, &glyph_metrics,
+			glyph_buf_byte_count = GetGlyphOutlineA(font_dc, code_point, GGO_GRAY8_BITMAP, &glyph_metrics,
 			                                        glyph_buf_size, glyph_buf, &identity);
 		} else {
 			error_code = 1U;
@@ -419,6 +419,7 @@ static unsigned long WINAPI render_run(void *param)
 	HWND window = (HWND)param;
 
 	HDC dc_handle = GetDC(window);
+	ASSERT(dc_handle);
 	if (!dc_handle) {
 		LOG_ERROR("error getting the device context");
 		goto END_ERROR;
@@ -439,7 +440,10 @@ static unsigned long WINAPI render_run(void *param)
 
 	void *app_buf =
 		// NOLINTNEXTLINE(performance-no-int-to-ptr): fixed base address for deterministic pointers across runs
-		VirtualAlloc(MEMORY_BASE_ADDRESS, app_buf_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		// MEMORY_BASE_ADDRESS conflicts with ASan's shadow memory region, so the reservation fails under ASan builds
+		// VirtualAlloc(MEMORY_BASE_ADDRESS, app_buf_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		VirtualAlloc(nullptr, app_buf_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	ASSERT(app_buf);
 	if (!app_buf) {
 		LOG_ERROR("unable to allocate %zu bytes for the app", app_buf_size);
 		goto END_ERROR;
@@ -464,10 +468,12 @@ static unsigned long WINAPI render_run(void *param)
 
 		void *renderer_buf = arena_push(&tix->arena, renderer_buf_size);
 		ASSERT(renderer_buf);
+		ASSERT(tix->arena.offset == renderer_buf_size);
 		arena_init(&tix->renderer_arena, renderer_buf_size, renderer_buf);
 
 		void *buffers_arena_buf = arena_push(&tix->arena, BUFFER_POOL_SIZE_MAX);
 		ASSERT(buffers_arena_buf);
+		ASSERT(tix->arena.offset == renderer_buf_size + BUFFER_POOL_SIZE_MAX);
 		arena_init(&tix->buffers_arena, BUFFER_POOL_SIZE_MAX, buffers_arena_buf);
 
 		win_state.storage.is_initialized = 1U;
@@ -522,10 +528,12 @@ static unsigned long WINAPI render_run(void *param)
 
 	ArenaMark init_mark = arena_mark(&tix->renderer_arena);
 	for (char p = DIRECT_CODE_POINT_MIN; p <= DIRECT_CODE_POINT_MAX; ++p) {
-		GlyphIdx glyph_idx = { .value = (uint32_t)p - DIRECT_CODE_POINT_MIN };
+		AtlasIdx atlas_idx = { .value = (uint32_t)p - DIRECT_CODE_POINT_MIN };
+		size_t atlas_offset = (size_t)atlas_idx.value * atlas_tile_size;
+		ASSERT(atlas_offset < tix->atlas.buf_size);
 		glyph_rasterize(font_dc, (uint32_t)p, &tix->renderer_arena, tix->grid.tile_ascent_px,
-		                tix->atlas.buf + (size_t)(glyph_idx.value * atlas_tile_size), tix->grid.tile_width_px,
-		                tix->grid.tile_height_px, tix->grid.tile_width_px);
+		                tix->atlas.buf + atlas_offset, tix->grid.tile_width_px, tix->grid.tile_height_px,
+		                tix->grid.tile_width_px);
 		arena_rewind(&init_mark);
 	}
 
@@ -862,8 +870,8 @@ static unsigned long WINAPI render_run(void *param)
 			unsigned tile_col = 0;
 			unsigned tile_min_y_px = tix->grid.tile_height_px * tile_row;
 			char *p = (char *)file.buf + file_lines[line_idx].start_idx;
-			GlyphIdx glyph_idx = {};
-			unsigned char *glyph_buf = nullptr;
+			AtlasIdx atlas_idx = {};
+			unsigned char *tile_buf = nullptr;
 			uint32_t bg_color = BG_COLOR;
 			uint32_t fg_color = FG_COLOR;
 			while (p <= (char *)file.buf + file_lines[line_idx].newline_idx && tile_col < tix->grid.tile_count_x) {
@@ -883,19 +891,25 @@ static unsigned long WINAPI render_run(void *param)
 				}
 
 				if (c >= DIRECT_CODE_POINT_MIN && c <= DIRECT_CODE_POINT_MAX) {
-					glyph_idx.value = (unsigned char)c - DIRECT_CODE_POINT_MIN;
-					glyph_buf = tix->atlas.buf + (size_t)glyph_idx.value * atlas_tile_size;
+					atlas_idx.value = (unsigned char)c - DIRECT_CODE_POINT_MIN;
+					// TODO(fredy): should we stract a function for this?
+					size_t atlas_offset = (size_t)atlas_idx.value * atlas_tile_size;
+					ASSERT(atlas_offset < tix->atlas.buf_size);
+					tile_buf = tix->atlas.buf + atlas_offset;
 
 					// TODO(fredy): what happen with width 1.5F?
 
 					// in memory: BB GG RR AA
 					uint8_t *dst_px_ptr = (unsigned char *)tix->backbuf.buf + (size_t)(tile_min_x_px * PIXEL_SIZE) +
-					                      backbuf_pitch_size * tile_min_y_px;
-					unsigned char *coverage_ptr = glyph_buf;
+					                      (size_t)backbuf_pitch_size * tile_min_y_px;
+					unsigned char *coverage_ptr = tile_buf;
 
 					// TODO(fredy): should I use SIMD here?
 					for (size_t y = 0; y < tix->grid.tile_height_px; ++y) {
 						for (size_t x = 0; x < tix->grid.tile_width_px; ++x) {
+							ASSERT(dst_px_ptr < tix->backbuf.buf + (size_t)tix->backbuf.height_px *
+							                                           tix->backbuf.width_px * PIXEL_SIZE);
+							ASSERT(coverage_ptr < tix->atlas.buf + (size_t)(atlas_idx.value + 1) * atlas_tile_size);
 							float blend_factor = (float)(*coverage_ptr) / 64.0F;
 
 							// blue

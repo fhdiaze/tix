@@ -2,7 +2,6 @@
 -fbuiltin
 -fuse-ld=lld
 -fstack-protector-strong
--mguard=cf
 -D_CRT_SECURE_NO_WARNINGS
 
 -Wall
@@ -39,7 +38,6 @@
 -Wenum-float-conversion
 -Wanon-enum-enum-conversion
 
--Wl,/guard:cf
 -Wl,/opt:ref
 -Wl,/opt:icf
 -Wl,/INCREMENTAL:NO

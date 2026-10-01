@@ -21,7 +21,7 @@ set "OutSysFilePath=%Outdir%/%OutSysFileName%.exe"
 set "OutAppFilePath=%Outdir%/%OutAppFileName%.dll"
 set "FlagsFile=%ScriptDir%../compile_flags.txt"
 set "DebugFlags=-g -gcodeview -O0 -DDEBUG -Wl,/DEBUG:FULL -fms-runtime-lib=static_dbg"
-set "DebugFlags=!DebugFlags! -fsanitize=address,undefined -fno-omit-frame-pointer"
+@REM  set "DebugFlags=!DebugFlags! -fsanitize=address,undefined -fno-omit-frame-pointer"
 set "ReleaseFlags=-O3 -DNDEBUG -flto -Wl,/opt:ref -Wl,/opt:icf -fms-runtime-lib=static"
 set "Flags="
 set "AppFlags=-shared -Wl,/MAP:%Outdir%/%OutAppFileName%.map,/MAPINFO:EXPORTS -Wl,/PDB:%Outdir%/%OutAppFileName%_%random%.pdb"
@@ -107,6 +107,27 @@ if not exist "%Datadir%" (
 ) else (
     echo Cleaning %Datadir%...
     del /q "%Datadir%\log.txt" 2>nul
+)
+
+if "%BuildMode%"=="debug" (
+    REM -fsanitize=address has no static-link option on Windows: the runtime is only ever a DLL,
+    REM which must sit next to the exe (or on PATH) or the process fails with STATUS_DLL_NOT_FOUND.
+    if "%Architecture%"=="x86" (
+        set "AsanDllName=clang_rt.asan_dynamic-i386.dll"
+    ) else (
+        set "AsanDllName=clang_rt.asan_dynamic-x86_64.dll"
+    )
+
+    for /f "usebackq tokens=*" %%R in (`clang -print-resource-dir`) do (
+        set "AsanDllPath=%%R\lib\windows\!AsanDllName!"
+    )
+
+    if exist "!AsanDllPath!" (
+        echo Copying !AsanDllName! into %Outdir%...
+        copy /y "!AsanDllPath!" "%Outdir%\" >nul
+    ) else (
+        echo Warning: could not find !AsanDllName! next to clang; the debug build may fail to start.
+    )
 )
 
 REM Read flags from file (path is relative to this script's location, not the caller's cwd)

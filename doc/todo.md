@@ -52,7 +52,7 @@ spike. See plan.md → "Stage 0 → Target state" for the specific choices.
 - [x] Rasterize each unique codepoint once via `IDWriteBitmapRenderTarget`
       into a fixed-size tile in one CPU-side atlas.
 - [x] Store tiles as 8-bit coverage only (discard DirectWrite color).
-- [ ] Codepoint → tile lookup.
+- [x] Codepoint → tile lookup.
 - [x] CPU compositing: per cell, blend bg→fg by coverage into the backbuffer.
 
 ## Stage 3 — Editor features (cell-grid only)

@@ -335,8 +335,8 @@ inline Vtwo vtwo_normalize(Vtwo a)
 
 typedef struct Arena {
 	size_t buf_size_byte;
-	unsigned char *buf;
 	size_t offset;
+	unsigned char *buf;
 } Arena;
 
 typedef struct ArenaMark {

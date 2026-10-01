@@ -21,8 +21,8 @@
 #define TILE_SIDE_PX_MAX 256
 #define KEY_STACK_COUNT_MAX 8
 #define FILE_PATH_SIZE_MAX 4096
-#define DIRECT_CODE_POINT_MIN 32
-#define DIRECT_CODE_POINT_MAX 126
+#define DIRECT_CODE_POINT_MIN 32  // SP (Space)
+#define DIRECT_CODE_POINT_MAX 126 // ~
 #define DIRECT_CODE_POINTS_COUNT (DIRECT_CODE_POINT_MAX - DIRECT_CODE_POINT_MIN + 1)
 #define ATLAS_PIXEL_SIZE 1
 #define ATLAS_TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE)
@@ -170,12 +170,12 @@ typedef enum CaretMode : uint8_t {
 	CARET_MODE_BLOCK,
 } CaretMode;
 
-typedef struct GlyphIdx {
+typedef struct AtlasIdx {
 	uint32_t value;
-} GlyphIdx;
+} AtlasIdx;
 
 typedef struct Tile {
-	GlyphIdx glyph_idx;
+	AtlasIdx glyph_idx;
 
 	uint32_t fg;
 	uint32_t bg;
@@ -189,8 +189,8 @@ typedef struct Line {
 } Line;
 
 typedef struct Storage {
-	void *buf;
 	size_t buf_size;
+	void *buf;
 
 	uint8_t is_initialized;
 } Storage;
@@ -219,9 +219,9 @@ typedef struct Atlas {
 } Atlas;
 
 typedef struct Backbuf {
-	unsigned char buf[BACKBUF_SIZE_MAX];
 	uint32_t width_px;
 	uint32_t height_px;
+	unsigned char buf[BACKBUF_SIZE_MAX];
 } Backbuf;
 
 typedef struct TileGrid {
@@ -237,23 +237,17 @@ typedef struct Tix {
 	Arena arena;
 	Arena renderer_arena;
 	Arena buffers_arena;
-
-	KEY stack_key_codes[KEY_STACK_COUNT_MAX];
-	KeyState stack_key_states[KEY_STACK_COUNT_MAX];
-	uint16_t stack_key_count;
-
+	Atlas atlas;
+	Caret caret;
 	size_t scroll_idx;
 	size_t lines_count;
-
-	TileGrid grid;
-	Atlas atlas;
 	Backbuf backbuf;
-
-	Caret caret;
-
+	TileGrid grid;
+	KeyState stack_key_states[KEY_STACK_COUNT_MAX];
+	uint16_t stack_key_count;
 	ContextMode context_mode;
 	CaretMode caret_mode;
-
+	KEY stack_key_codes[KEY_STACK_COUNT_MAX];
 	char context_path[FILE_PATH_SIZE_MAX];
 } Tix;
 
