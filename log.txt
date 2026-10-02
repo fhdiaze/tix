@@ -1,9 +1,0 @@
-I[2026-09-29T07:25:48.350266300Z] ./src/sys_win.c:WinMain:985: 00007FF77D790000
-I[2026-09-29T07:25:48.351640300Z] ./src/sys_win.c:WinMain:986: 0000000000000000
-I[2026-09-29T07:25:48.352264400Z] ./src/sys_win.c:WinMain:987: 000002AEC1DEA4D6
-I[2026-09-29T07:25:48.352853700Z] ./src/sys_win.c:WinMain:988: 1
-I[2026-09-29T07:25:48.353392500Z] ./src/sys_win.c:WinMain:990: Starting the editor
-
-E[2026-09-29T07:25:48.436483700Z] ./src/sys_win.c:sys_file_read:395: failed to allocate memory for the content of file: ./test.txt
-E[2026-09-29T07:25:48.437358500Z] ./src/sys_win.c:render_run:674: The file ./test.txt could not be open
-

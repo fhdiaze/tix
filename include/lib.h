@@ -365,14 +365,28 @@ void *arena_push(Arena *arena, size_t size_byte)
 	return result;
 }
 
-void *arena_push_zero(Arena *arena, size_t size_byte)
+void *arena_push_zero(Arena *arena, size_t size)
 {
-	void *result = arena_push(arena, size_byte);
+	void *result = arena_push(arena, size);
 	if (result) {
-		memset(result, 0, size_byte);
+		memset(result, 0, size);
 	}
 
 	return result;
+}
+
+uint32_t arena_pop(Arena *arena, size_t size)
+{
+	ASSERT(size <= arena->offset);
+	uint32_t error_code = 0U;
+
+	if (size <= arena->offset) {
+		arena->offset = arena->offset - size;
+	} else {
+		error_code = 1U;
+	}
+
+	return error_code;
 }
 
 void arena_clear(Arena *arena)

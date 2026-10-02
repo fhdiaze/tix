@@ -219,6 +219,7 @@ typedef struct Atlas {
 } Atlas;
 
 typedef struct Backbuf {
+	uint32_t pitch_size;
 	uint32_t width_px;
 	uint32_t height_px;
 	unsigned char buf[BACKBUF_SIZE_MAX];

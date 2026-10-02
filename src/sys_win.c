@@ -355,18 +355,18 @@ static inline uint32_t file_get_last_write_time(const char *const file_path, FIL
 	return 1U;
 }
 
-static uint32_t file_free_memory(void *buf)
+static uint32_t file_free_memory(Arena *arena, ReadFileResult *file)
 {
 	uint32_t result = 0U;
 
-	if (buf) {
-		result = (uint32_t)VirtualFree(buf, 0, MEM_RELEASE);
+	if (file->buf) {
+		result = arena_pop(arena, file->size);
 	}
 
 	return result;
 }
 
-static ReadFileResult sys_file_read(const char *const path)
+static ReadFileResult sys_file_read(Arena *arena, const char *const path)
 {
 	ReadFileResult result = {};
 
@@ -376,9 +376,9 @@ static ReadFileResult sys_file_read(const char *const path)
 		LARGE_INTEGER filesize_struct;
 		if (GetFileSizeEx(handle, &filesize_struct)) {
 			uint32_t file_size = (uint32_t)(filesize_struct.QuadPart);
+			ArenaMark mark = arena_mark(arena);
+			result.buf = arena_push_zero(arena, file_size);
 
-			// TODO(fredy): if the file is too big, use file mapping?
-			result.buf = VirtualAlloc(nullptr, file_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 			if (result.buf) {
 				DWORD read_size = 0;
 				if (ReadFile(handle, result.buf, file_size, &read_size, nullptr) || read_size == file_size) {
@@ -386,20 +386,24 @@ static ReadFileResult sys_file_read(const char *const path)
 				} else {
 					LOG_ERROR("failed to read the file: %s", path);
 
-					file_free_memory(result.buf);
+					arena_rewind(&mark);
 
 					result.buf = nullptr;
 					result.size = 0;
 				}
 			} else {
+				ASSERT(false && "failed to allocate memory for the content of file");
+				// TODO(fredy): if the file is too big, use file mapping?
 				LOG_ERROR("failed to allocate memory for the content of file: %s", path);
 			}
 		} else {
+			ASSERT(false && "failed to get the size of the file");
 			LOG_ERROR("failed to get the size of the file: %s", path);
 		}
 
 		CloseHandle(handle);
 	} else {
+		ASSERT(false && "failed to open the file");
 		LOG_ERROR("failed to open the file: %s", path);
 	}
 
@@ -440,8 +444,8 @@ static unsigned long WINAPI render_run(void *param)
 
 	void *app_buf =
 		// NOLINTNEXTLINE(performance-no-int-to-ptr): fixed base address for deterministic pointers across runs
-		// MEMORY_BASE_ADDRESS conflicts with ASan's shadow memory region, so the reservation fails under ASan builds
 		// VirtualAlloc(MEMORY_BASE_ADDRESS, app_buf_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+		// MEMORY_BASE_ADDRESS conflicts with ASan's shadow memory region, so the reservation fails under ASan builds
 		VirtualAlloc(nullptr, app_buf_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 	ASSERT(app_buf);
 	if (!app_buf) {
@@ -645,6 +649,7 @@ static unsigned long WINAPI render_run(void *param)
 			if (new_width_px * new_height_px * PIXEL_SIZE <= BACKBUF_SIZE_MAX) {
 				tix->backbuf.width_px = new_width_px;
 				tix->backbuf.height_px = new_height_px;
+				tix->backbuf.pitch_size = tix->backbuf.width_px * PIXEL_SIZE;
 				tix->grid.tile_count_x = tix->backbuf.width_px / tix->grid.tile_width_px;
 				tix->grid.tile_count_y =
 					(uint32_t)floorf((float)tix->backbuf.height_px / (float)tix->grid.tile_height_px);
@@ -664,12 +669,10 @@ static unsigned long WINAPI render_run(void *param)
 		// =============================================================================
 		// Update
 		// =============================================================================
-		uint32_t backbuf_pitch_size = tix->backbuf.width_px * PIXEL_SIZE;
-
 		uint32_t was_file_updated = 0U;
 		FILETIME current_write_time = {};
 		if (!file.buf) {
-			file = sys_file_read(file_path);
+			file = sys_file_read(&tix->buffers_arena, file_path);
 			if (file.buf) {
 				file_get_last_write_time(file_path, &file_previous_write_time);
 				was_file_updated = 1U;
@@ -678,9 +681,9 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		} else if (file_get_last_write_time(file_path, &current_write_time)) {
 			if (CompareFileTime(&current_write_time, &file_previous_write_time) > 0) {
-				file_free_memory(file.buf);
+				file_free_memory(&tix->buffers_arena, &file);
 
-				file = sys_file_read(file_path);
+				file = sys_file_read(&tix->buffers_arena, file_path);
 
 				if (file.buf) {
 					was_file_updated = 1U;
@@ -901,7 +904,7 @@ static unsigned long WINAPI render_run(void *param)
 
 					// in memory: BB GG RR AA
 					uint8_t *dst_px_ptr = (unsigned char *)tix->backbuf.buf + (size_t)(tile_min_x_px * PIXEL_SIZE) +
-					                      (size_t)backbuf_pitch_size * tile_min_y_px;
+					                      (size_t)tix->backbuf.pitch_size * tile_min_y_px;
 					unsigned char *coverage_ptr = tile_buf;
 
 					// TODO(fredy): should I use SIMD here?
@@ -936,7 +939,7 @@ static unsigned long WINAPI render_run(void *param)
 							++coverage_ptr;
 						}
 
-						dst_px_ptr += backbuf_pitch_size - (size_t)tix->grid.tile_width_px * PIXEL_SIZE;
+						dst_px_ptr += tix->backbuf.pitch_size - (size_t)tix->grid.tile_width_px * PIXEL_SIZE;
 
 						// bitmap_draw_border(&backbuf, (float)cell_min_x_px, (float)cell_min_y_px,
 						//                    (float)cell_blit_width_px, (float)cell_blit_height_px,
