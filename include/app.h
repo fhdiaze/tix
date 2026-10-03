@@ -20,6 +20,7 @@
 #define POINTS_PER_INCH 72
 #define TILE_SIDE_PX_MAX 256
 #define KEY_STACK_COUNT_MAX 8
+#define LINE_COUNT_MAX 1000000
 #define FILE_PATH_SIZE_MAX 4096
 #define DIRECT_CODE_POINT_MIN 32  // SP (Space)
 #define DIRECT_CODE_POINT_MAX 126 // ~
@@ -179,7 +180,7 @@ typedef struct Tile {
 
 	uint32_t fg;
 	uint32_t bg;
-	uint32_t flags;
+	uint32_t flags; // cursor/selection/etc., added in Stage 3
 } Tile;
 
 typedef struct Line {
@@ -225,6 +226,11 @@ typedef struct Backbuf {
 	unsigned char buf[BACKBUF_SIZE_MAX];
 } Backbuf;
 
+typedef struct Buffer {
+	Line lines[LINE_COUNT_MAX];
+	size_t lines_count;
+} Buffer;
+
 typedef struct TileGrid {
 	uint32_t tile_width_px;
 	uint32_t tile_height_px;
@@ -243,6 +249,7 @@ typedef struct Tix {
 	size_t scroll_idx;
 	size_t lines_count;
 	Backbuf backbuf;
+	Buffer buffer;
 	TileGrid grid;
 	KeyState stack_key_states[KEY_STACK_COUNT_MAX];
 	uint16_t stack_key_count;

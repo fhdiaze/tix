@@ -545,11 +545,6 @@ static unsigned long WINAPI render_run(void *param)
 
 	ReadFileResult file = {};
 	FILETIME file_previous_write_time = {};
-
-	constexpr uint32_t file_lines_count_max = 1000000;
-	Line *file_lines = ARENA_PUSH_ARRAY(&tix->buffers_arena, Line, file_lines_count_max);
-	size_t file_lines_count = 0;
-
 	LARGE_INTEGER performance_frequency;
 	QueryPerformanceFrequency(&performance_frequency);
 
@@ -695,7 +690,7 @@ static unsigned long WINAPI render_run(void *param)
 		}
 
 		if (was_file_updated) {
-			file_lines_count = 0;
+			tix->buffer.lines_count = 0;
 
 			// TODO(fredy): should it be a circular buffer?
 			static uint8_t overhang_mask[64] = {
@@ -705,17 +700,17 @@ static unsigned long WINAPI render_run(void *param)
 				0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
 			};
 			char *buf = (char *)file.buf;
-			size_t remaining_byte_count = file.size;
+			size_t remaining_size = file.size;
 
 			__m256i newline_needle = _mm256_set1_epi8('\n');
 			__m256i complex_mask = _mm256_set1_epi8((char)0x80);
 			size_t line_start_idx = 0;
 			size_t last_byte_idx = 0;
 
-			while (file_lines_count < file_lines_count_max && remaining_byte_count) {
+			while (tix->buffer.lines_count < LINE_COUNT_MAX && remaining_size) {
 				__m256i contains_complex = _mm256_setzero_si256();
 
-				while (remaining_byte_count > 32) {
+				while (remaining_size > 32) {
 					__m256i batch = _mm256_loadu_si256((__m256i *)buf);
 
 					__m256i test_newline = _mm256_cmpeq_epi8(batch, newline_needle);
@@ -732,11 +727,11 @@ static unsigned long WINAPI render_run(void *param)
 						test_complex = _mm256_and_si256(test_complex, mask_complex);
 						contains_complex = _mm256_or_si256(contains_complex, test_complex);
 
-						file_lines[file_lines_count].contains_complex_chars |=
+						tix->buffer.lines[tix->buffer.lines_count].contains_complex_chars |=
 							(uint8_t)!_mm256_testz_si256(contains_complex, contains_complex);
 
 						buf += first_newline_idx;
-						remaining_byte_count -= first_newline_idx;
+						remaining_size -= first_newline_idx;
 
 						break;
 					}
@@ -744,24 +739,24 @@ static unsigned long WINAPI render_run(void *param)
 					contains_complex = _mm256_or_si256(contains_complex, test_complex);
 
 					buf += 32;
-					remaining_byte_count -= 32;
+					remaining_size -= 32;
 				}
 
-				if (buf[0] == '\n' || remaining_byte_count == 1) {
+				if (buf[0] == '\n' || remaining_size == 1) {
 					last_byte_idx = (size_t)(buf - (char *)file.buf);
 
-					file_lines[file_lines_count].newline_idx = last_byte_idx;
-					file_lines[file_lines_count].start_idx = line_start_idx;
+					tix->buffer.lines[tix->buffer.lines_count].newline_idx = last_byte_idx;
+					tix->buffer.lines[tix->buffer.lines_count].start_idx = line_start_idx;
 
 					line_start_idx = last_byte_idx + 1;
 
-					++file_lines_count;
+					++tix->buffer.lines_count;
 				} else if (buf[0] < 0) {
-					file_lines[file_lines_count].contains_complex_chars = 1U;
+					tix->buffer.lines[tix->buffer.lines_count].contains_complex_chars = 1U;
 				}
 
 				++buf;
-				--remaining_byte_count;
+				--remaining_size;
 			}
 		}
 
@@ -772,7 +767,7 @@ static unsigned long WINAPI render_run(void *param)
 			was_caret_moved = 1U;
 		}
 
-		if (tix_input.keys[KEY_J].ended_down && tix->caret.line_idx + 1 < file_lines_count) {
+		if (tix_input.keys[KEY_J].ended_down && tix->caret.line_idx + 1 < tix->buffer.lines_count) {
 			++tix->caret.line_idx;
 			was_caret_moved = 1U;
 		}
@@ -783,7 +778,7 @@ static unsigned long WINAPI render_run(void *param)
 		}
 
 		if (tix_input.keys[KEY_D].ended_down && tix_input.keys[KEY_CTRL].ended_down) {
-			size_t delta = file_lines_count - tix->caret.line_idx;
+			size_t delta = tix->buffer.lines_count - tix->caret.line_idx;
 			tix->caret.line_idx += delta > 1 ? min(delta - 1, 10) : 0;
 			was_caret_moved = 1U;
 		}
@@ -801,13 +796,14 @@ static unsigned long WINAPI render_run(void *param)
 		}
 
 		if (tix_input.keys[KEY_UG].ended_down) {
-			tix->caret.line_idx = file_lines_count > 0 ? file_lines_count - 1 : 0;
+			tix->caret.line_idx = tix->buffer.lines_count > 0 ? tix->buffer.lines_count - 1 : 0;
 			was_caret_moved = 1U;
 		}
 
-		size_t new_line_col = file_lines[tix->caret.line_idx].newline_idx - file_lines[tix->caret.line_idx].start_idx;
+		size_t new_line_col =
+			tix->buffer.lines[tix->caret.line_idx].newline_idx - tix->buffer.lines[tix->caret.line_idx].start_idx;
 		if (new_line_col > 0 &&
-		    *((unsigned char *)file.buf + file_lines[tix->caret.line_idx].newline_idx - 1) == '\r') {
+		    *((unsigned char *)file.buf + tix->buffer.lines[tix->caret.line_idx].newline_idx - 1) == '\r') {
 			--new_line_col;
 		}
 
@@ -818,6 +814,21 @@ static unsigned long WINAPI render_run(void *param)
 
 		if (tix_input.keys[KEY_L].ended_down && tix->caret.col_idx + 1 < new_line_col) {
 			++tix->caret.col_idx;
+			was_caret_moved = 1U;
+		}
+
+		if (tix_input.keys[KEY_DOLLAR].ended_down && tix->caret.col_idx + 1 < new_line_col) {
+			tix->caret.col_idx = new_line_col;
+			was_caret_moved = 1U;
+		}
+
+		if (tix_input.keys[KEY_LOWBAR].ended_down) {
+			tix->caret.col_idx = 0;
+			was_caret_moved = 1U;
+		}
+
+		if (tix_input.keys[KEY_ZERO].ended_down) {
+			tix->caret.col_idx = 0;
 			was_caret_moved = 1U;
 		}
 
@@ -842,7 +853,7 @@ static unsigned long WINAPI render_run(void *param)
 		if (tix_input.mouse_notches != 0) {
 			int64_t new_scroll_offset = (int64_t)tix->scroll_idx;
 			new_scroll_offset -= LINES_PER_NOTCH * (int64_t)tix_input.mouse_notches;
-			new_scroll_offset = min(new_scroll_offset, (int64_t)file_lines_count - 1);
+			new_scroll_offset = min(new_scroll_offset, (int64_t)tix->buffer.lines_count - 1);
 			new_scroll_offset = max(new_scroll_offset, 0);
 
 			ASSERT(new_scroll_offset >= 0);
@@ -850,34 +861,32 @@ static unsigned long WINAPI render_run(void *param)
 			tix->scroll_idx = (size_t)new_scroll_offset;
 		}
 
-		ASSERT(tix->caret.line_idx < file_lines_count);
+		ASSERT(tix->caret.line_idx < tix->buffer.lines_count);
 
-		// =============================================================================
-		// Segmentation
-		// =============================================================================
-
-		// =============================================================================
-		// Layout
-		// =============================================================================
 		bitmap_draw_rectangle(&tix->backbuf.buf, tix->backbuf.width_px, tix->backbuf.height_px, 0.0F, 0.0F,
 		                      (float)tix->backbuf.width_px, (float)tix->backbuf.height_px, BG_COLOR);
 		unsigned tile_row = 0;
-		for (size_t line_idx = tix->scroll_idx; line_idx < file_lines_count && tile_row < tix->grid.tile_count_y;
+		for (size_t line_idx = tix->scroll_idx; line_idx < tix->buffer.lines_count && tile_row < tix->grid.tile_count_y;
 		     ++line_idx) {
 			// =============================================================================
 			// Shaping
 			// =============================================================================
+			if (tix->buffer.lines[line_idx].contains_complex_chars) {
+				// Sometimes multiple codepoints are merged into one glyph
+			}
 
-			// Sometimes multiple codepoints are merged into one glyph
-
+			// =============================================================================
+			// Render
+			// =============================================================================
 			unsigned tile_col = 0;
 			unsigned tile_min_y_px = tix->grid.tile_height_px * tile_row;
-			char *p = (char *)file.buf + file_lines[line_idx].start_idx;
+			char *p = (char *)file.buf + tix->buffer.lines[line_idx].start_idx;
 			AtlasIdx atlas_idx = {};
 			unsigned char *tile_buf = nullptr;
 			uint32_t bg_color = BG_COLOR;
 			uint32_t fg_color = FG_COLOR;
-			while (p <= (char *)file.buf + file_lines[line_idx].newline_idx && tile_col < tix->grid.tile_count_x) {
+			while (p <= (char *)file.buf + tix->buffer.lines[line_idx].newline_idx &&
+			       tile_col < tix->grid.tile_count_x) {
 				unsigned tile_min_x_px = tile_col * tix->grid.tile_width_px;
 				char c = *p;
 
@@ -954,26 +963,15 @@ static unsigned long WINAPI render_run(void *param)
 			++tile_row;
 		}
 
-		// =============================================================================
-		// Rasterization
-		// =============================================================================
-		// Store atlas tiles as 8-bit coverage/alpha, not pre-coloured RGB. Same reasoning as the GPU shader:
-		// one grayscale glyph tile serves any foreground color, computed at blend time
-		// (out = bg + coverage * (fg - bg)), rather than re-rasterizing per color.
-
-		// =============================================================================
-		// Composition
-		// =============================================================================
-
-		// =============================================================================
-		// Present
-		// =============================================================================
 		LARGE_INTEGER wall_clock_at_end;
 		QueryPerformanceCounter(&wall_clock_at_end);
 
 		float frame_time_s =
 			(float)(wall_clock_at_end.QuadPart - wall_clock_at_start.QuadPart) / (float)performance_frequency.QuadPart;
 
+		// =============================================================================
+		// Present
+		// =============================================================================
 		char window_title[256];
 		(void)snprintf(window_title, sizeof(window_title), "tix - ft: %fms, fps: %f", (double)(1000.0F * frame_time_s),
 		               1.0 / (double)frame_time_s);

@@ -5,8 +5,8 @@
 tix is a text editor focused on editing code in any programming language. It has the next values in order of importance:
 
 - Correctness
-- Speed
-- Low Memory footprint
+- Reliability
+- Performance:low Memory footprint
 - All the UI should be text like
     - Keyboard navigation first, mouse navigation second.
     - Based on vim modes: vim everywhere, vim first

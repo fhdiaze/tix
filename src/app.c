@@ -7,11 +7,6 @@
 // structure: tree, lines
 // primitives: chars, code_point, grapheme cluster, glyph, rune,
 
-typedef struct Buffer {
-	char tx_name[256];
-	char tx_parts[256];
-} Buffer;
-
 static void buffer_split(Buffer *buffer)
 {
 }
