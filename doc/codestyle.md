@@ -1,5 +1,12 @@
 # Code Style
 
+Inspired by TigerStyle
+
+## Safety
+
+* Never compare floating-point values for equality
+* Use signed and unsigned integer types consistently
+
 ## Developer Experience
 
 ### Naming Things

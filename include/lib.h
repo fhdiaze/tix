@@ -344,23 +344,28 @@ typedef struct ArenaMark {
 	size_t offset;
 } ArenaMark;
 
-typedef struct PoolHeader {
+typedef struct Block {
 	void *next_free;
-} PoolHeader;
+} Block;
 
 typedef struct Pool {
 	void *buf;
 	size_t buf_size;
 	size_t block_size;
-	void *first_block_free;
+	Block *first_free;
 } Pool;
+
+typedef struct Stack {
+	void *buf;
+	size_t buf_size;
+} Stack;
 
 void pool_init(Pool *pool, void *buf, size_t buf_size, size_t block_size)
 {
 	pool->buf = buf;
 	pool->buf_size = buf_size;
 	pool->block_size = block_size;
-	pool->first_block_free = nullptr;
+	pool->first_free = nullptr;
 }
 
 void arena_init(Arena *restrict arena, const size_t buf_size, unsigned char *const restrict buf)
