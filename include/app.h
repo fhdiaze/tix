@@ -198,6 +198,7 @@ typedef struct Storage {
 
 typedef struct Caret {
 	size_t line_idx;
+	size_t copy_col_idx;
 	size_t col_idx;
 	uint32_t flags;
 } Caret;

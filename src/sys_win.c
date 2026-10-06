@@ -475,6 +475,7 @@ static unsigned long WINAPI render_run(void *param)
 	Tix *tix = (Tix *)win_state.storage.buf;
 	tix->caret_mode = CARET_MODE_NORMAL;
 	tix->caret.line_idx = 0;
+	tix->caret.copy_col_idx = 0;
 	tix->caret.col_idx = 0;
 
 	if (!win_state.storage.is_initialized) {
@@ -772,33 +773,34 @@ static unsigned long WINAPI render_run(void *param)
 		}
 
 		// Move caret
-		uint32_t was_caret_moved = 0U;
+		uint32_t was_caret_line_changed = 0U;
+		uint32_t was_caret_col_changed = 0U;
 		if (tix_input.keys[KEY_K].ended_down && tix->caret.line_idx > 0) {
 			--tix->caret.line_idx;
-			was_caret_moved = 1U;
+			was_caret_line_changed = 1U;
 		}
 
 		if (tix_input.keys[KEY_J].ended_down && tix->caret.line_idx + 1 < tix->buffer.lines_count) {
 			++tix->caret.line_idx;
-			was_caret_moved = 1U;
+			was_caret_line_changed = 1U;
 		}
 
 		if (tix_input.keys[KEY_U].ended_down && tix_input.keys[KEY_CTRL].ended_down) {
 			tix->caret.line_idx -= min(tix->caret.line_idx, 10);
-			was_caret_moved = 1U;
+			was_caret_line_changed = 1U;
 		}
 
 		if (tix_input.keys[KEY_D].ended_down && tix_input.keys[KEY_CTRL].ended_down) {
 			size_t delta = tix->buffer.lines_count - tix->caret.line_idx;
 			tix->caret.line_idx += delta > 1 ? min(delta - 1, 10) : 0;
-			was_caret_moved = 1U;
+			was_caret_line_changed = 1U;
 		}
 
 		if (tix_input.keys[KEY_G].ended_down) {
 			if (tix_input.keys[KEY_G].half_transition_count > 1 ||
 			    (tix->stack_key_count == 1 && tix->stack_key_codes[0] == KEY_G)) {
 				tix->caret.line_idx = 0U;
-				was_caret_moved = 1U;
+				was_caret_line_changed = 1U;
 				tix->stack_key_count = 0U;
 			} else {
 				tix->stack_key_codes[0] = KEY_G;
@@ -808,36 +810,50 @@ static unsigned long WINAPI render_run(void *param)
 
 		if (tix_input.keys[KEY_UG].ended_down) {
 			tix->caret.line_idx = tix->buffer.lines_count > 0 ? tix->buffer.lines_count - 1 : 0;
-			was_caret_moved = 1U;
+			was_caret_line_changed = 1U;
+		}
+
+		if (tix_input.keys[KEY_H].ended_down) {
+			if (tix->caret.col_idx > 0) {
+				--tix->caret.col_idx;
+			}
+			was_caret_col_changed = 1U;
 		}
 
 		size_t caret_line_newline_col_idx = line_newline_col_idx(tix, &file, tix->caret.line_idx);
-		if (tix_input.keys[KEY_H].ended_down && tix->caret.col_idx > 0) {
-			--tix->caret.col_idx;
-			was_caret_moved = 1U;
+		if (tix_input.keys[KEY_L].ended_down) {
+			if (tix->caret.col_idx + 1 < caret_line_newline_col_idx) {
+				++tix->caret.col_idx;
+			}
+			was_caret_col_changed = 1U;
 		}
 
-		if (tix_input.keys[KEY_L].ended_down && tix->caret.col_idx + 1 < caret_line_newline_col_idx) {
-			++tix->caret.col_idx;
-			was_caret_moved = 1U;
-		}
-
-		if (tix_input.keys[KEY_DOLLAR].ended_down && tix->caret.col_idx + 1 < caret_line_newline_col_idx) {
-			tix->caret.col_idx = caret_line_newline_col_idx;
-			was_caret_moved = 1U;
+		if (tix_input.keys[KEY_DOLLAR].ended_down) {
+			if (tix->caret.col_idx + 1 < caret_line_newline_col_idx) {
+				tix->caret.col_idx = caret_line_newline_col_idx;
+			}
+			was_caret_col_changed = 1U;
 		}
 
 		if (tix_input.keys[KEY_ZERO].ended_down) {
 			tix->caret.col_idx = 0;
-			was_caret_moved = 1U;
+			was_caret_col_changed = 1U;
 		}
 
-		if (was_caret_moved && tix->caret.line_idx < tix->scroll_idx) {
-			tix->scroll_idx = tix->caret.line_idx;
+		if (was_caret_col_changed) {
+			tix->caret.copy_col_idx = tix->caret.col_idx;
 		}
 
-		if (was_caret_moved && tix->caret.line_idx >= tix->scroll_idx + tix->grid.tile_count_y) {
-			tix->scroll_idx = tix->caret.line_idx - tix->grid.tile_count_y + 1;
+		if (was_caret_line_changed) {
+			if (tix->caret.line_idx < tix->scroll_idx) {
+				tix->scroll_idx = tix->caret.line_idx;
+			}
+
+			tix->caret.col_idx = tix->caret.copy_col_idx;
+
+			if (tix->caret.line_idx >= tix->scroll_idx + tix->grid.tile_count_y) {
+				tix->scroll_idx = tix->caret.line_idx - tix->grid.tile_count_y + 1;
+			}
 		}
 
 		// Process mouse wheel
@@ -888,21 +904,23 @@ static unsigned long WINAPI render_run(void *param)
 							if (tix_input.keys[KEY_LOWBAR].ended_down && !was_non_blank_found) {
 								was_non_blank_found = 1U;
 								size_t tmp_tile_idx_x = tix->caret.col_idx;
+								tix->caret.copy_col_idx = tile_idx_x;
 								tix->caret.col_idx = tile_idx_x;
 
 								// restart the rendering of the line
-								if (tix->caret.col_idx < tile_idx_x) {
+								if (tmp_tile_idx_x < tile_idx_x) {
 									tile_idx_x = (uint32_t)tmp_tile_idx_x;
 									p = (char *)file.buf + tix->buffer.lines[line_idx].start_idx + tile_idx_x;
 									continue;
 								}
 							}
-						} else if (( c == '\r' || c == '\n' ) && newline_col_idx == 0) {
+						} else if ((c == '\r' || c == '\n') && newline_col_idx == 0) {
 							c = ' ';
 						}
 
 						if (tile_idx_x == tix->caret.col_idx ||
 						    (tix->caret.col_idx > tile_idx_x && tile_idx_x + 1 >= newline_col_idx)) {
+							tix->caret.col_idx = tile_idx_x;
 							fg_color = BG_COLOR;
 							bg_color = FG_COLOR;
 
