@@ -11,7 +11,7 @@ static void buffer_split(Buffer *buffer)
 {
 }
 
-void tix_init(Tix *tix)
+void app_init(Storage *storage)
 {
 	buffer_split(nullptr);
 }

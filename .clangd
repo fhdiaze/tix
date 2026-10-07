@@ -8,7 +8,13 @@ InlayHints:
   TypeNameLimit: 24
 
 CompileFlags:
-  Add: [-DDEBUG]
+  Add:
+    - -DDEBUG
+    # build.bat gets these from vcvarsall.bat, which clangd does not run
+    - -isystemC:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.50.35717/include
+    - -isystemC:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/ucrt
+    - -isystemC:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/um
+    - -isystemC:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0/shared
 
 Diagnostics:
   UnusedIncludes: Strict

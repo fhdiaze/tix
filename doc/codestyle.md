@@ -2,10 +2,17 @@
 
 Inspired by TigerStyle
 
+## Rules
+
+* Everything should be inlined if it is not duplicated.
+* Code should only be extracted if it is duplicated and if it is semantically correct to share/reuse it. It is not enough if the logic is the same.
+* It is ok to have long functions.
+
 ## Safety
 
 * Never compare floating-point values for equality
 * Use signed and unsigned integer types consistently
+* Assert on access to arrays. The indexes should be visible in a debugger session.
 
 ## Developer Experience
 

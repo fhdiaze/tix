@@ -109,7 +109,7 @@ typedef union Vfour {
 	};
 
 	float e[4];
-} VFour;
+} Vfour;
 
 typedef union Vtwo {
 	struct {
@@ -132,8 +132,8 @@ typedef union Vtwo {
 inline Vtwo vtwo_flip_x(Vtwo a)
 {
 	Vtwo result = {
-		.x = a.x,
-		.y = -a.y,
+		.x = -a.x,
+		.y = a.y,
 	};
 
 	return result;
@@ -167,7 +167,7 @@ inline Vtwo vtwo_flip_y(Vtwo a)
  *
  * @example
  * Vtwo v = {3.0f, 4.0f};
- * Vtwo neg = vtwo_inv(v);  // {-3.0f, -4.0f}
+ * Vtwo neg = vtwo_neg(v);  // {-3.0f, -4.0f}
  */
 inline Vtwo vtwo_neg(Vtwo a)
 {
@@ -262,7 +262,7 @@ inline Vtwo vtwo_scale(Vtwo a, float s)
  *
  * @param a The vector
  * @param s The scalar
- * @return Vtwo The translated vector (a.x * s, a.y * s)
+ * @return Vtwo The translated vector (a.x + s, a.y + s)
  */
 inline Vtwo vtwo_add_scalar(Vtwo a, float s)
 {
@@ -360,7 +360,7 @@ typedef struct Stack {
 	size_t buf_size;
 } Stack;
 
-void pool_init(Pool *pool, void *buf, size_t buf_size, size_t block_size)
+inline void pool_init(Pool *pool, void *buf, size_t buf_size, size_t block_size)
 {
 	pool->buf = buf;
 	pool->buf_size = buf_size;
@@ -368,14 +368,14 @@ void pool_init(Pool *pool, void *buf, size_t buf_size, size_t block_size)
 	pool->first_free = nullptr;
 }
 
-void arena_init(Arena *restrict arena, const size_t buf_size, unsigned char *const restrict buf)
+inline void arena_init(Arena *restrict arena, const size_t buf_size, unsigned char *const restrict buf)
 {
 	arena->buf_size_byte = buf_size;
 	arena->buf = buf;
 	arena->offset = 0;
 }
 
-void *arena_push(Arena *arena, size_t size_byte)
+inline void *arena_push(Arena *arena, size_t size_byte)
 {
 	void *result = nullptr;
 
@@ -389,7 +389,7 @@ void *arena_push(Arena *arena, size_t size_byte)
 	return result;
 }
 
-void *arena_push_zero(Arena *arena, size_t size)
+inline void *arena_push_zero(Arena *arena, size_t size)
 {
 	void *result = arena_push(arena, size);
 	if (result) {
@@ -399,7 +399,7 @@ void *arena_push_zero(Arena *arena, size_t size)
 	return result;
 }
 
-uint32_t arena_pop(Arena *arena, size_t size)
+inline uint32_t arena_pop(Arena *arena, size_t size)
 {
 	ASSERT(size <= arena->offset);
 	uint32_t error_code = 0U;
@@ -413,12 +413,12 @@ uint32_t arena_pop(Arena *arena, size_t size)
 	return error_code;
 }
 
-void arena_clear(Arena *arena)
+inline void arena_clear(Arena *arena)
 {
 	arena->offset = 0;
 }
 
-ArenaMark arena_mark(Arena *arena)
+inline ArenaMark arena_mark(Arena *arena)
 {
 	ArenaMark mark = {
 		.arena = arena,
@@ -428,9 +428,18 @@ ArenaMark arena_mark(Arena *arena)
 	return mark;
 }
 
-void arena_rewind(ArenaMark *mark)
+inline void arena_rewind(ArenaMark *mark)
 {
 	mark->arena->offset = mark->offset;
+}
+
+inline void memory_zero(size_t size, void *ptr)
+{
+	unsigned char *byte = (unsigned char *)ptr;
+	for (size_t i = 0; i < size; ++i) {
+		*byte = 0U;
+		++byte;
+	}
 }
 
 // =============================================================================
