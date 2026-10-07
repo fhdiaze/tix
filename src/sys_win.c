@@ -573,6 +573,7 @@ static unsigned long WINAPI render_run(void *param)
 		MSG msg;
 		// TODO(fredy): limit the iterations of this loop
 		// TODO(fredy): deal with WM_DPICHANGED and WM_GETDPISCALEDSIZE
+		// TODO(fredy): should we mark the caret as dirty?
 		while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
 			size_t key_stroke_info = (size_t)msg.lParam;
 			uint32_t was_down = (key_stroke_info & (1U << 30U)) != 0;
@@ -903,27 +904,21 @@ static unsigned long WINAPI render_run(void *param)
 						if (c > DIRECT_CODE_POINT_MIN && c <= DIRECT_CODE_POINT_MAX) {
 							if (tix_input.keys[KEY_LOWBAR].ended_down && !was_non_blank_found) {
 								was_non_blank_found = 1U;
-								size_t tmp_tile_idx_x = tix->caret.col_idx;
 								tix->caret.copy_col_idx = tile_idx_x;
 								tix->caret.col_idx = tile_idx_x;
-
-								// restart the rendering of the line
-								if (tmp_tile_idx_x < tile_idx_x) {
-									tile_idx_x = (uint32_t)tmp_tile_idx_x;
-									p = (char *)file.buf + tix->buffer.lines[line_idx].start_idx + tile_idx_x;
-									continue;
-								}
 							}
 						} else if ((c == '\r' || c == '\n') && newline_col_idx == 0) {
 							c = ' ';
 						}
 
-						if (tile_idx_x == tix->caret.col_idx ||
-						    (tix->caret.col_idx > tile_idx_x && tile_idx_x + 1 >= newline_col_idx)) {
+						if (tile_idx_x == tix->caret.col_idx &&
+						    (!tix_input.keys[KEY_LOWBAR].ended_down || was_non_blank_found)) {
+							fg_color = BG_COLOR;
+							bg_color = FG_COLOR;
+						} else if (tix->caret.col_idx > tile_idx_x && tile_idx_x + 1 >= newline_col_idx) {
 							tix->caret.col_idx = tile_idx_x;
 							fg_color = BG_COLOR;
 							bg_color = FG_COLOR;
-
 						} else {
 							fg_color = FG_COLOR;
 							bg_color = BG_COLOR;
