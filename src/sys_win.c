@@ -853,7 +853,8 @@ static unsigned long WINAPI render_run(void *param)
 			tix->scroll_idx = (size_t)new_scroll_offset;
 		}
 
-		ASSERT(tix->caret.line_idx < tix->buffer.lines_count);
+		ASSERT((tix->buffer.lines_count == 0 && tix->caret.line_idx == 0) ||
+		       tix->caret.line_idx < tix->buffer.lines_count);
 
 		bitmap_draw_rectangle(&tix->backbuf.buf, tix->backbuf.width_px, tix->backbuf.height_px, 0.0F, 0.0F,
 		                      (float)tix->backbuf.width_px, (float)tix->backbuf.height_px, BG_COLOR);
