@@ -5,9 +5,10 @@
 #include <stdlib.h>
 #include <windows.h>
 
-#include "app.h"
 #include "lib.h"
 #include "sys.h"
+
+#include "app.c"
 
 #undef LOG_LEVEL
 #define LOG_LEVEL LOG_LEVEL_ALL

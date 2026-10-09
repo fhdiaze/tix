@@ -13,15 +13,6 @@
             "cwd": "${workspaceFolder}/data",
             "preLaunchTask": "build-x64",
             "console": "integratedTerminal",
-        },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "LaunchX86",
-            "program": "${workspaceFolder}/bin/tix_win.exe",
-            "args": [],
-            "cwd": "${workspaceFolder}/data",
-            "preLaunchTask": "build-x86"
         }
     ]
 }

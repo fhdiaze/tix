@@ -38,8 +38,6 @@
 -Wenum-float-conversion
 -Wanon-enum-enum-conversion
 
--Wl,/opt:ref
--Wl,/opt:icf
 -Wl,/INCREMENTAL:NO
 
 -I./include

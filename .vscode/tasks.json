@@ -7,29 +7,12 @@
             "command": ".\\misc\\build.bat",
             "args": [
                 "/m",
-                "debug",
-                "/a",
-                "x64"
+                "debug"
             ],
             "group": {
                 "kind": "build",
                 "isDefault": true
             },
-            "problemMatcher": [
-                "$msCompile"
-            ]
-        },
-        {
-            "label": "build-x86",
-            "type": "shell",
-            "command": ".\\misc\\build.bat",
-            "args": [
-                "/m",
-                "debug",
-                "/a",
-                "x86"
-            ],
-            "group": "build",
             "problemMatcher": [
                 "$msCompile"
             ]

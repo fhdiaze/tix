@@ -5,8 +5,8 @@ Working checklist. this file tracks *what's next* against the current state of t
 Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ---
-- [ ] vim: $ command
-- [ ] vim: _ command
+- [x] vim: $ command
+- [x] vim: _ command
 - [ ] vim: w command
 - [ ] vim: b command
 - [ ] vim: f command

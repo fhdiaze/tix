@@ -48,7 +48,7 @@
 	} while (0)
 #endif // LIB_COMPILER_MSVC
 #else
-#define ASSERT(cond) (void;)
+#define ASSERT(cond) ((void)0)
 #endif // DEBUG
 
 // =============================================================================
