@@ -333,9 +333,14 @@ inline Vtwo vtwo_normalize(Vtwo a)
 #define ARENA_PUSH_ARRAY_ZERO(arena, type, count) (type *)arena_push_zero((arena), sizeof(type) * (count))
 #define ARENA_PUSH_STRUCT_ZERO(arena, type) (type *)arena_push_zero((arena), sizeof(type))
 
+typedef struct Bytes {
+	void *buf;
+	size_t buf_size;
+} Bytes;
+
 typedef struct Arena {
-	size_t buf_size_byte;
 	size_t offset;
+	size_t buf_size;
 	unsigned char *buf;
 } Arena;
 
@@ -370,7 +375,7 @@ inline void pool_init(Pool *pool, void *buf, size_t buf_size, size_t block_size)
 
 inline void arena_init(Arena *restrict arena, const size_t buf_size, unsigned char *const restrict buf)
 {
-	arena->buf_size_byte = buf_size;
+	arena->buf_size = buf_size;
 	arena->buf = buf;
 	arena->offset = 0;
 }
@@ -379,9 +384,9 @@ inline void *arena_push(Arena *arena, size_t size_byte)
 {
 	void *result = nullptr;
 
-	ASSERT(arena->offset + size_byte <= arena->buf_size_byte);
+	ASSERT(arena->offset + size_byte <= arena->buf_size);
 
-	if (arena->offset + size_byte <= arena->buf_size_byte) {
+	if (arena->offset + size_byte <= arena->buf_size) {
 		result = arena->buf + arena->offset;
 		arena->offset += size_byte;
 	}

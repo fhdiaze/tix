@@ -220,6 +220,7 @@ typedef struct Bitmap {
 typedef struct Atlas {
 	unsigned char buf[ATLAS_BUF_SIZE_MAX];
 	size_t buf_size;
+	uint32_t tile_size;
 } Atlas;
 
 typedef struct Backbuf {

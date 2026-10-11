@@ -107,35 +107,27 @@ static void bitmap_draw_border(Bitmap *bitmap, float rect_x_px, float rect_y_px,
 	}
 }
 
-static uint32_t mem_copy_rect(unsigned char *src_buf, size_t src_size_x, size_t src_size_y, size_t src_pitch_size,
-                              size_t src_offset_x, size_t src_offset_y, unsigned char *dst_buf, size_t dst_size_x,
-                              size_t dst_size_y, size_t dst_pitch_size, size_t dst_offset_x, size_t dst_offset_y,
-                              size_t blit_size_x, size_t blit_size_y)
+static void mem_copy_rect(unsigned char *src_buf, size_t src_size_x, size_t src_size_y, size_t src_pitch_size,
+                          size_t src_offset_x, size_t src_offset_y, unsigned char *dst_buf, size_t dst_size_x,
+                          size_t dst_size_y, size_t dst_pitch_size, size_t dst_offset_x, size_t dst_offset_y,
+                          size_t blit_size_x, size_t blit_size_y)
 {
-	uint32_t error_code = 0U;
-
 	ASSERT(src_offset_x + blit_size_x <= src_size_x);
 	ASSERT(src_offset_y + blit_size_y <= src_size_y);
+	ASSERT(src_pitch_size >= blit_size_x);
 
 	ASSERT(dst_offset_x + blit_size_x <= dst_size_x);
 	ASSERT(dst_offset_y + blit_size_y <= dst_size_y);
-
-	unsigned char *dst_ptr = dst_buf + dst_offset_x + dst_pitch_size * dst_offset_y;
-	unsigned char *src_ptr = src_buf + src_offset_x + src_pitch_size * src_offset_y;
+	ASSERT(dst_pitch_size >= blit_size_x);
 
 	for (size_t y = 0; y < blit_size_y; ++y) {
 		for (size_t x = 0; x < blit_size_x; ++x) {
+			unsigned char *dst_ptr = dst_buf + dst_offset_x + dst_pitch_size * (dst_offset_y + y) + x;
+			unsigned char *src_ptr = src_buf + src_offset_x + src_pitch_size * (src_offset_y + y) + x;
+
 			*dst_ptr = *src_ptr;
-
-			++dst_ptr;
-			++src_ptr;
 		}
-
-		dst_ptr += dst_pitch_size - blit_size_x;
-		src_ptr += src_pitch_size - blit_size_x;
 	}
-
-	return error_code;
 }
 
 /**
@@ -521,17 +513,16 @@ static unsigned long WINAPI render_run(void *param)
 	ASSERT(tix->grid.tile_width_px <= TILE_SIDE_PX_MAX);
 	ASSERT(tix->grid.tile_height_px <= TILE_SIDE_PX_MAX);
 
-	unsigned atlas_tile_size = tix->grid.tile_width_px * tix->grid.tile_height_px * ATLAS_PIXEL_SIZE;
+	tix->atlas.tile_size = tix->grid.tile_width_px * tix->grid.tile_height_px * ATLAS_PIXEL_SIZE;
+	ASSERT(tix->atlas.tile_size <= ATLAS_TILE_SIZE_MAX);
 
-	ASSERT(atlas_tile_size <= ATLAS_TILE_SIZE_MAX);
-
-	tix->atlas.buf_size = (size_t)DIRECT_CODE_POINTS_COUNT * atlas_tile_size;
+	tix->atlas.buf_size = (size_t)DIRECT_CODE_POINTS_COUNT * tix->atlas.tile_size;
 	ASSERT(tix->atlas.buf_size <= (size_t)ATLAS_BUF_SIZE_MAX);
 
 	ArenaMark init_mark = arena_mark(&tix->renderer_arena);
 	for (char p = DIRECT_CODE_POINT_MIN; p <= DIRECT_CODE_POINT_MAX; ++p) {
 		AtlasIdx atlas_idx = { .value = (uint32_t)p - DIRECT_CODE_POINT_MIN };
-		size_t atlas_offset = (size_t)atlas_idx.value * atlas_tile_size;
+		size_t atlas_offset = (size_t)atlas_idx.value * tix->atlas.tile_size;
 		ASSERT(atlas_offset < tix->atlas.buf_size);
 		glyph_rasterize(font_dc, (uint32_t)p, &tix->renderer_arena, tix->grid.tile_ascent_px,
 		                tix->atlas.buf + atlas_offset, tix->grid.tile_width_px, tix->grid.tile_height_px,
@@ -551,7 +542,7 @@ static unsigned long WINAPI render_run(void *param)
 		QueryPerformanceCounter(&wall_clock_at_start);
 
 		// =============================================================================
-		// Input
+		// Gather input
 		// =============================================================================
 		TixInput tix_input = {};
 
@@ -660,7 +651,7 @@ static unsigned long WINAPI render_run(void *param)
 		}
 
 		// =============================================================================
-		// Update
+		// Update buffers
 		// =============================================================================
 		uint32_t was_file_updated = 0U;
 		FILETIME current_write_time = {};
@@ -758,7 +749,9 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		}
 
-		// Move caret
+		// =============================================================================
+		// Process input
+		// =============================================================================
 		uint32_t was_caret_line_changed = 0U;
 		uint32_t was_caret_col_changed = 0U;
 		if (tix_input.keys[KEY_K].ended_down && tix->caret.line_idx > 0) {
@@ -857,11 +850,15 @@ static unsigned long WINAPI render_run(void *param)
 		ASSERT((tix->buffer.lines_count == 0 && tix->caret.line_idx == 0) ||
 		       tix->caret.line_idx < tix->buffer.lines_count);
 
-		bitmap_draw_rectangle(&tix->backbuf.buf, tix->backbuf.width_px, tix->backbuf.height_px, 0.0F, 0.0F,
-		                      (float)tix->backbuf.width_px, (float)tix->backbuf.height_px, BG_COLOR);
-		unsigned tile_row = 0;
-		for (size_t line_idx = tix->scroll_idx; line_idx < tix->buffer.lines_count && tile_row < tix->grid.tile_count_y;
-		     ++line_idx) {
+		// bitmap_draw_rectangle(&tix->backbuf.buf, tix->backbuf.width_px, tix->backbuf.height_px, 0.0F, 0.0F,
+		//                       (float)tix->backbuf.width_px, (float)tix->backbuf.height_px, BG_COLOR);
+		for (unsigned tile_idx_y = 0; tile_idx_y < tix->grid.tile_count_y; ++tile_idx_y) {
+			size_t line_idx = tix->scroll_idx + tile_idx_y;
+			unsigned tile_min_y_px = tix->grid.tile_height_px * tile_idx_y;
+			AtlasIdx atlas_idx = {};
+			uint32_t bg_color = BG_COLOR;
+			uint32_t fg_color = FG_COLOR;
+
 			// =============================================================================
 			// Shaping
 			// =============================================================================
@@ -872,104 +869,107 @@ static unsigned long WINAPI render_run(void *param)
 			// =============================================================================
 			// Render
 			// =============================================================================
-			unsigned tile_min_y_px = tix->grid.tile_height_px * tile_row;
-			char *p = (char *)file.buf + tix->buffer.lines[line_idx].start_idx;
-			AtlasIdx atlas_idx = {};
-			unsigned char *tile_buf = nullptr;
-			uint32_t bg_color = BG_COLOR;
-			uint32_t fg_color = FG_COLOR;
-			uint32_t was_non_blank_found = 0;
-			uint32_t tile_idx_x = 0;
-			size_t newline_col_idx = line_newline_col_idx(tix, &file, line_idx);
-			while (tile_idx_x < tix->grid.tile_count_x && tile_idx_x <= newline_col_idx) {
-				if (p <= (char *)file.buf + tix->buffer.lines[line_idx].newline_idx) {
-					char c = *p;
-					unsigned tile_min_x_px = tile_idx_x * tix->grid.tile_width_px;
+			Bytes tile_buf = {};
+			for (uint32_t tile_idx_x = 0; tile_idx_x < tix->grid.tile_count_x; ++tile_idx_x) {
+				char tile_char = ' ';
+				uint32_t tile_min_x_px = tile_idx_x * tix->grid.tile_width_px;
 
-					if (line_idx == tix->caret.line_idx) {
-						if (c > DIRECT_CODE_POINT_MIN && c <= DIRECT_CODE_POINT_MAX) {
-							if (tix_input.keys[KEY_LOWBAR].ended_down && !was_non_blank_found) {
-								was_non_blank_found = 1U;
-								tix->caret.copy_col_idx = tile_idx_x;
+				if (line_idx < tix->buffer.lines_count) {
+					size_t newline_col_idx = line_newline_col_idx(tix, &file, line_idx);
+					uint32_t was_non_blank_found = 0;
+
+					if (tile_idx_x <= newline_col_idx) {
+						char *file_chars = (char *)file.buf;
+						size_t offset = tix->buffer.lines[line_idx].start_idx + tile_idx_x;
+						ASSERT(offset < file.size);
+						char file_char = file_chars[offset];
+
+						if (line_idx == tix->caret.line_idx) {
+							if (file_char > DIRECT_CODE_POINT_MIN && file_char <= DIRECT_CODE_POINT_MAX) {
+								tile_char = file_char;
+								if (tix_input.keys[KEY_LOWBAR].ended_down && !was_non_blank_found) {
+									was_non_blank_found = 1U;
+									tix->caret.copy_col_idx = tile_idx_x;
+									tix->caret.col_idx = tile_idx_x;
+								}
+							}
+
+							if (tile_idx_x == tix->caret.col_idx &&
+							    (!tix_input.keys[KEY_LOWBAR].ended_down || was_non_blank_found)) {
+								fg_color = BG_COLOR;
+								bg_color = FG_COLOR;
+							} else if (tix->caret.col_idx > tile_idx_x && tile_idx_x + 1 >= newline_col_idx) {
 								tix->caret.col_idx = tile_idx_x;
+								fg_color = BG_COLOR;
+								bg_color = FG_COLOR;
+							} else {
+								fg_color = FG_COLOR;
+								bg_color = BG_COLOR;
 							}
-						} else if ((c == '\r' || c == '\n') && newline_col_idx == 0) {
-							c = ' ';
-						}
-
-						if (tile_idx_x == tix->caret.col_idx &&
-						    (!tix_input.keys[KEY_LOWBAR].ended_down || was_non_blank_found)) {
-							fg_color = BG_COLOR;
-							bg_color = FG_COLOR;
-						} else if (tix->caret.col_idx > tile_idx_x && tile_idx_x + 1 >= newline_col_idx) {
-							tix->caret.col_idx = tile_idx_x;
-							fg_color = BG_COLOR;
-							bg_color = FG_COLOR;
-						} else {
-							fg_color = FG_COLOR;
-							bg_color = BG_COLOR;
 						}
 					}
 
-					if (c >= DIRECT_CODE_POINT_MIN && c <= DIRECT_CODE_POINT_MAX) {
-						atlas_idx.value = (unsigned char)c - DIRECT_CODE_POINT_MIN;
-						// TODO(fredy): should we extract a function for this?
-						size_t atlas_offset = (size_t)atlas_idx.value * atlas_tile_size;
-						ASSERT(atlas_offset < tix->atlas.buf_size);
-						tile_buf = tix->atlas.buf + atlas_offset;
+					ASSERT(tile_char >= DIRECT_CODE_POINT_MIN && tile_char <= DIRECT_CODE_POINT_MAX);
 
-						// TODO(fredy): what happen with width 1.5F?
+					atlas_idx.value = (unsigned char)tile_char - DIRECT_CODE_POINT_MIN;
+					// TODO(fredy): should we extract a function for this?
+					size_t atlas_offset = (size_t)atlas_idx.value * tix->atlas.tile_size;
+					ASSERT(atlas_offset < tix->atlas.buf_size);
+					tile_buf.buf = tix->atlas.buf + atlas_offset;
+					tile_buf.buf_size = tix->atlas.tile_size;
 
-						// in memory: BB GG RR AA
-						uint8_t *dst_px_ptr = (unsigned char *)tix->backbuf.buf + (size_t)(tile_min_x_px * PIXEL_SIZE) +
-						                      (size_t)tix->backbuf.pitch_size * tile_min_y_px;
-						unsigned char *coverage_ptr = tile_buf;
+					// TODO(fredy): what happen with width 1.5F?
 
-						// TODO(fredy): should I use SIMD here?
-						for (size_t y = 0; y < tix->grid.tile_height_px; ++y) {
-							for (size_t x = 0; x < tix->grid.tile_width_px; ++x) {
-								ASSERT(dst_px_ptr < tix->backbuf.buf + (size_t)tix->backbuf.height_px *
-								                                           tix->backbuf.width_px * PIXEL_SIZE);
-								ASSERT(coverage_ptr < tix->atlas.buf + (size_t)(atlas_idx.value + 1) * atlas_tile_size);
-								float blend_factor = (float)(*coverage_ptr) / 64.0F;
+					// in memory: BB GG RR AA
+					uint8_t *dst_px_ptr = (unsigned char *)tix->backbuf.buf + (size_t)(tile_min_x_px * PIXEL_SIZE) +
+					                      (size_t)tix->backbuf.pitch_size * tile_min_y_px;
+					unsigned char *coverage_ptr = tile_buf.buf;
 
-								// blue
-								float blended = (float)BLUE_BITS(fg_color) * blend_factor +
-								                (float)BLUE_BITS(bg_color) * (1.0F - blend_factor);
-								*dst_px_ptr = (uint8_t)(blended + 0.5F);
+					// TODO(fredy): should I use SIMD here?
+					for (size_t y = 0; y < tix->grid.tile_height_px; ++y) {
+						for (size_t x = 0; x < tix->grid.tile_width_px; ++x) {
+							ASSERT(dst_px_ptr < tix->backbuf.buf + (size_t)tix->backbuf.height_px *
+							                                           tix->backbuf.width_px * PIXEL_SIZE);
+							ASSERT(coverage_ptr <
+							       tix->atlas.buf + (size_t)(atlas_idx.value + 1) * tix->atlas.tile_size);
+							float blend_factor = (float)(*coverage_ptr) / 64.0F;
 
-								// green
-								++dst_px_ptr;
-								blended = (float)GREEN_BITS(fg_color) * blend_factor +
-								          (float)GREEN_BITS(bg_color) * (1.0F - blend_factor);
-								*dst_px_ptr = (uint8_t)(blended + 0.5F);
+							// blue
+							float blended = (float)BLUE_BITS(fg_color) * blend_factor +
+							                (float)BLUE_BITS(bg_color) * (1.0F - blend_factor);
+							*dst_px_ptr = (uint8_t)(blended + 0.5F);
 
-								// red
-								++dst_px_ptr;
-								blended = (float)RED_BITS(fg_color) * blend_factor +
-								          (float)RED_BITS(bg_color) * (1.0F - blend_factor);
-								*dst_px_ptr = (uint8_t)(blended + 0.5F);
+							// green
+							++dst_px_ptr;
+							blended = (float)GREEN_BITS(fg_color) * blend_factor +
+							          (float)GREEN_BITS(bg_color) * (1.0F - blend_factor);
+							*dst_px_ptr = (uint8_t)(blended + 0.5F);
 
-								// alpha
-								++dst_px_ptr;
+							// red
+							++dst_px_ptr;
+							blended = (float)RED_BITS(fg_color) * blend_factor +
+							          (float)RED_BITS(bg_color) * (1.0F - blend_factor);
+							*dst_px_ptr = (uint8_t)(blended + 0.5F);
 
-								++dst_px_ptr;
-								++coverage_ptr;
-							}
+							// alpha
+							++dst_px_ptr;
 
-							dst_px_ptr += tix->backbuf.pitch_size - (size_t)tix->grid.tile_width_px * PIXEL_SIZE;
-
-							// bitmap_draw_border(&backbuf, (float)cell_min_x_px, (float)cell_min_y_px,
-							//                    (float)cell_blit_width_px, (float)cell_blit_height_px,
-							//                    0xFFFFFFU);
+							++dst_px_ptr;
+							++coverage_ptr;
 						}
+
+						dst_px_ptr += tix->backbuf.pitch_size - (size_t)tix->grid.tile_width_px * PIXEL_SIZE;
+
+						// bitmap_draw_border(&backbuf, (float)cell_min_x_px, (float)cell_min_y_px,
+						//                    (float)cell_blit_width_px, (float)cell_blit_height_px,
+						//                    0xFFFFFFU);
 					}
-					++p;
+
+					++tile_idx_x;
+					++line_idx;
 				}
-				++tile_idx_x;
-			}
-			++tile_row;
-		}
+			} // for tile grid columns
+		} // for tile grid rows
 
 		LARGE_INTEGER wall_clock_at_end;
 		QueryPerformanceCounter(&wall_clock_at_end);

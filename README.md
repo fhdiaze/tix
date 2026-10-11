@@ -5,7 +5,6 @@ tix is a text editor written in C focused on usability, performance and correctn
 ## Functionality
 
 - Its UI is text based: vim style
-- It is formal specified using TLA+
 - It is command based
 - It does not use scripting languages
 
