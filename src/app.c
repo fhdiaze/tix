@@ -27,117 +27,129 @@
 constexpr char WORD_CHAR_SET[] = { 'a', 'b' };
 constexpr char WHITE_SPACE_CHAR_SET[] = { ' ', '	' };
 
-typedef enum KEY : uint8_t {
-	KEY_SP,
-	KEY_EXCL,
-	KEY_QUOTE,
-	KEY_NUM,
-	KEY_DOLLAR,
-	KEY_PERCNT,
-	KEY_AMP,
-	KEY_APOS,
-	KEY_LPAREN,
-	KEY_RPAREN,
-	KEY_AST,
-	KEY_PLUS,
-	KEY_COMMA,
-	KEY_DASH,
-	KEY_PERIOD,
-	KEY_SLASH,
+typedef enum KeyCode : uint8_t {
+	KEY_CODE_SP,
+	KEY_CODE_EXCL,
+	KEY_CODE_QUOTE,
+	KEY_CODE_NUM,
+	KEY_CODE_DOLLAR,
+	KEY_CODE_PERCNT,
+	KEY_CODE_AMP,
+	KEY_CODE_APOS,
+	KEY_CODE_LPAREN,
+	KEY_CODE_RPAREN,
+	KEY_CODE_AST,
+	KEY_CODE_PLUS,
+	KEY_CODE_COMMA,
+	KEY_CODE_DASH,
+	KEY_CODE_PERIOD,
+	KEY_CODE_SLASH,
 
-	KEY_ZERO,
-	KEY_ONE,
-	KEY_TWO,
-	KEY_THREE,
-	KEY_FOUR,
-	KEY_FIVE,
-	KEY_SIX,
-	KEY_SEVEN,
-	KEY_EIGHT,
-	KEY_NINE,
+	KEY_CODE_ZERO,
+	KEY_CODE_ONE,
+	KEY_CODE_TWO,
+	KEY_CODE_THREE,
+	KEY_CODE_FOUR,
+	KEY_CODE_FIVE,
+	KEY_CODE_SIX,
+	KEY_CODE_SEVEN,
+	KEY_CODE_EIGHT,
+	KEY_CODE_NINE,
 
-	KEY_COLON,
-	KEY_SEMI,
-	KEY_LT,
-	KEY_EQ,
-	KEY_GT,
-	KEY_QUEST,
-	KEY_COMMAT,
+	KEY_CODE_COLON,
+	KEY_CODE_SEMI,
+	KEY_CODE_LT,
+	KEY_CODE_EQ,
+	KEY_CODE_GT,
+	KEY_CODE_QUEST,
+	KEY_CODE_COMMAT,
 
-	KEY_UA,
-	KEY_UB,
-	KEY_UC,
-	KEY_UD,
-	KEY_UE,
-	KEY_UF,
-	KEY_UG,
-	KEY_UH,
-	KEY_UI,
-	KEY_UJ,
-	KEY_UK,
-	KEY_UL,
-	KEY_UM,
-	KEY_UN,
-	KEY_UO,
-	KEY_UP,
-	KEY_UQ,
-	KEY_UR,
-	KEY_US,
-	KEY_UT,
-	KEY_UU,
-	KEY_UV,
-	KEY_UW,
-	KEY_UX,
-	KEY_UY,
-	KEY_UZ,
+	KEY_CODE_UA,
+	KEY_CODE_UB,
+	KEY_CODE_UC,
+	KEY_CODE_UD,
+	KEY_CODE_UE,
+	KEY_CODE_UF,
+	KEY_CODE_UG,
+	KEY_CODE_UH,
+	KEY_CODE_UI,
+	KEY_CODE_UJ,
+	KEY_CODE_UK,
+	KEY_CODE_UL,
+	KEY_CODE_UM,
+	KEY_CODE_UN,
+	KEY_CODE_UO,
+	KEY_CODE_UP,
+	KEY_CODE_UQ,
+	KEY_CODE_UR,
+	KEY_CODE_US,
+	KEY_CODE_UT,
+	KEY_CODE_UU,
+	KEY_CODE_UV,
+	KEY_CODE_UW,
+	KEY_CODE_UX,
+	KEY_CODE_UY,
+	KEY_CODE_UZ,
 
-	KEY_LSQB,
-	KEY_BSLASH,
-	KEY_RSQB,
-	KEY_HAT,
-	KEY_LOWBAR,
-	KEY_GRAVE,
+	KEY_CODE_LSQB,
+	KEY_CODE_BSLASH,
+	KEY_CODE_RSQB,
+	KEY_CODE_HAT,
+	KEY_CODE_LOWBAR,
+	KEY_CODE_GRAVE,
 
-	KEY_A,
-	KEY_B,
-	KEY_C,
-	KEY_D,
-	KEY_E,
-	KEY_F,
-	KEY_G,
-	KEY_H,
-	KEY_I,
-	KEY_J,
-	KEY_K,
-	KEY_L,
-	KEY_M,
-	KEY_N,
-	KEY_O,
-	KEY_P,
-	KEY_Q,
-	KEY_R,
-	KEY_S,
-	KEY_T,
-	KEY_U,
-	KEY_V,
-	KEY_W,
-	KEY_X,
-	KEY_Y,
-	KEY_Z,
+	KEY_CODE_A,
+	KEY_CODE_B,
+	KEY_CODE_C,
+	KEY_CODE_D,
+	KEY_CODE_E,
+	KEY_CODE_F,
+	KEY_CODE_G,
+	KEY_CODE_H,
+	KEY_CODE_I,
+	KEY_CODE_J,
+	KEY_CODE_K,
+	KEY_CODE_L,
+	KEY_CODE_M,
+	KEY_CODE_N,
+	KEY_CODE_O,
+	KEY_CODE_P,
+	KEY_CODE_Q,
+	KEY_CODE_R,
+	KEY_CODE_S,
+	KEY_CODE_T,
+	KEY_CODE_U,
+	KEY_CODE_V,
+	KEY_CODE_W,
+	KEY_CODE_X,
+	KEY_CODE_Y,
+	KEY_CODE_Z,
 
-	KEY_LCUB,
-	KEY_PIPE,
-	KEY_RCUB,
-	KEY_TILDE,
-	KEY_DEL,
+	KEY_CODE_LCUB,
+	KEY_CODE_PIPE,
+	KEY_CODE_RCUB,
+	KEY_CODE_TILDE,
+	KEY_CODE_DEL,
 
-	KEY_SHIFT,
-	KEY_CTRL,
-	KEY_RETURN,
-	KEY_ESC,
+	KEY_CODE_SHIFT,
+	KEY_CODE_CTRL,
+	KEY_CODE_RETURN,
+	KEY_CODE_ESC,
 
-	KEY_COUNT,
-} KEY;
+	KEY_CODE_COUNT,
+} KeyCode;
+
+typedef enum ContextMode : uint8_t {
+	CONTEXT_MODE_FOLDER,
+	CONTEXT_MODE_FILE,
+} ContextMode;
+
+typedef enum CaretMode : uint8_t {
+	CARET_MODE_NORMAL,
+	CARET_MODE_VIEW,
+	CARET_MODE_INSERT,
+	CARET_MODE_BLOCK,
+} CaretMode;
 
 typedef enum Command : uint8_t {
 	COMMAND_W,
@@ -158,20 +170,8 @@ typedef struct TixInput {
 	 */
 	int32_t mouse_notches;
 
-	KeyState keys[KEY_COUNT];
+	KeyState keys[KEY_CODE_COUNT];
 } TixInput;
-
-typedef enum ContextMode : uint8_t {
-	CONTEXT_MODE_FOLDER,
-	CONTEXT_MODE_FILE,
-} ContextMode;
-
-typedef enum CaretMode : uint8_t {
-	CARET_MODE_NORMAL,
-	CARET_MODE_VIEW,
-	CARET_MODE_INSERT,
-	CARET_MODE_BLOCK,
-} CaretMode;
 
 typedef struct AtlasIdx {
 	uint32_t value;
@@ -218,16 +218,17 @@ typedef struct Bitmap {
 } Bitmap;
 
 typedef struct Atlas {
-	unsigned char buf[ATLAS_BUF_SIZE_MAX];
 	size_t buf_size;
 	uint32_t tile_size;
+	unsigned char buf[ATLAS_BUF_SIZE_MAX];
 } Atlas;
 
 typedef struct Backbuf {
+	size_t buf_size;
+	unsigned char buf[BACKBUF_SIZE_MAX];
 	uint32_t pitch_size;
 	uint32_t width_px;
 	uint32_t height_px;
-	unsigned char buf[BACKBUF_SIZE_MAX];
 } Backbuf;
 
 typedef struct Buffer {
@@ -259,7 +260,7 @@ typedef struct Tix {
 	uint16_t stack_key_count;
 	ContextMode context_mode;
 	CaretMode caret_mode;
-	KEY stack_key_codes[KEY_STACK_COUNT_MAX];
+	KeyCode stack_key_codes[KEY_STACK_COUNT_MAX];
 	char context_path[FILE_PATH_SIZE_MAX];
 } Tix;
 
@@ -277,4 +278,32 @@ static void buffer_split(Buffer *buffer)
 void app_init(Storage *storage)
 {
 	buffer_split(nullptr);
+}
+
+static void tix_update_backbuf_dims(Tix *tix, uint32_t width_px, uint32_t height_px)
+{
+	ASSERT(width_px * height_px * PIXEL_SIZE <= BACKBUF_SIZE_MAX);
+
+	tix->backbuf.width_px = width_px;
+	tix->backbuf.height_px = height_px;
+	tix->backbuf.buf_size = (size_t)tix->backbuf.width_px * tix->backbuf.height_px * PIXEL_SIZE;
+	tix->backbuf.pitch_size = tix->backbuf.width_px * PIXEL_SIZE;
+
+	tix->grid.tile_count_x = tix->backbuf.width_px / tix->grid.tile_width_px;
+	tix->grid.tile_count_y = tix->backbuf.height_px / tix->grid.tile_height_px;
+}
+
+static void tix_update_tile_dims(Tix *tix, uint32_t width_px, uint32_t height_px, uint32_t ascent_px)
+{
+	tix->grid.tile_width_px = width_px;
+	tix->grid.tile_height_px = height_px;
+	tix->grid.tile_ascent_px = ascent_px; // Includes the internal leading
+
+	tix->atlas.tile_size = tix->grid.tile_width_px * tix->grid.tile_height_px * ATLAS_PIXEL_SIZE;
+	tix->atlas.buf_size = (size_t)DIRECT_CODE_POINTS_COUNT * tix->atlas.tile_size;
+
+	ASSERT(tix->grid.tile_width_px <= TILE_SIDE_PX_MAX);
+	ASSERT(tix->grid.tile_height_px <= TILE_SIDE_PX_MAX);
+	ASSERT(tix->atlas.tile_size <= ATLAS_TILE_SIZE_MAX);
+	ASSERT(tix->atlas.buf_size <= (size_t)ATLAS_BUF_SIZE_MAX);
 }
