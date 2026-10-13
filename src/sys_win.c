@@ -908,24 +908,25 @@ static unsigned long WINAPI render_run(void *param)
 					// TODO(fredy): what happen with width 1.5F?
 
 					// in memory: BB GG RR AA
-					size_t dst_offset =
-						(size_t)tile_min_x_px * PIXEL_SIZE + (size_t)tix->backbuf.pitch_size * tile_min_y_px;
+					size_t dst_pitch_size = tix->backbuf.pitch_size;
+					size_t src_pitch_size = tix->atlas.tile_pitch_size;
+					size_t dst_offset = (size_t)tile_min_x_px * PIXEL_SIZE + dst_pitch_size * tile_min_y_px;
 					size_t src_offset = (size_t)atlas_idx.value * tix->atlas.tile_size;
-					size_t src_pitch_size = (size_t)tix->grid.tile_width_px * ATLAS_PIXEL_SIZE;
 
 					// TODO(fredy): should I use SIMD here?
 					size_t blit_width_px = min(tix->grid.tile_width_px, tix->backbuf.width_px - tile_min_x_px);
 					size_t blit_height_px = min(tix->grid.tile_height_px, tix->backbuf.height_px - tile_min_y_px);
 					for (size_t y = 0; y < blit_height_px; ++y) {
 						for (size_t x = 0; x < blit_width_px; ++x) {
-							size_t dst_px_offset =
-								dst_offset + (size_t)tix->backbuf.height_px * tix->backbuf.width_px * PIXEL_SIZE;
+							size_t dst_px_offset = dst_offset + x * PIXEL_SIZE + y * dst_pitch_size;
 							size_t src_px_offset = src_offset + x * ATLAS_PIXEL_SIZE + y * src_pitch_size;
 							ASSERT(dst_px_offset < tix->backbuf.buf_size);
 							ASSERT(src_px_offset < tix->atlas.buf_size);
 
-							uint8_t *dst_px_ptr = (unsigned char *)tix->backbuf.buf + dst_px_offset;
-							float blend_factor = (float)(*coverage_ptr) / 64.0F;
+							unsigned char *dst_px_ptr = (unsigned char *)tix->backbuf.buf + dst_px_offset;
+							unsigned char *src_px_ptr = (unsigned char *)tix->atlas.buf + src_px_offset;
+
+							float blend_factor = (float)(*src_px_ptr) / 64.0F;
 
 							// blue
 							float blended = (float)BLUE_BITS(fg_color) * blend_factor +
@@ -943,23 +944,12 @@ static unsigned long WINAPI render_run(void *param)
 							blended = (float)RED_BITS(fg_color) * blend_factor +
 							          (float)RED_BITS(bg_color) * (1.0F - blend_factor);
 							*dst_px_ptr = (uint8_t)(blended + 0.5F);
-
-							// alpha
-							++dst_px_ptr;
-
-							++dst_px_ptr;
-							++coverage_ptr;
 						}
-
-						dst_px_ptr += tix->backbuf.pitch_size - (size_t)tix->grid.tile_width_px * PIXEL_SIZE;
 
 						// bitmap_draw_border(&backbuf, (float)cell_min_x_px, (float)cell_min_y_px,
 						//                    (float)cell_blit_width_px, (float)cell_blit_height_px,
 						//                    0xFFFFFFU);
 					}
-
-					++tile_idx_x;
-					++line_idx;
 				}
 			} // for tile grid columns
 		} // for tile grid rows

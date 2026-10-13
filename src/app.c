@@ -14,6 +14,7 @@
 #define LINES_PER_NOTCH 3
 #define POINTS_PER_INCH 72
 #define TILE_SIDE_PX_MAX 256
+#define TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * PIXEL_SIZE)
 #define KEY_STACK_COUNT_MAX 8
 #define LINE_COUNT_MAX 1000000
 #define FILE_PATH_SIZE_MAX 4096
@@ -220,6 +221,7 @@ typedef struct Bitmap {
 typedef struct Atlas {
 	size_t buf_size;
 	uint32_t tile_size;
+	uint32_t tile_pitch_size;
 	unsigned char buf[ATLAS_BUF_SIZE_MAX];
 } Atlas;
 
@@ -240,6 +242,8 @@ typedef struct TileGrid {
 	uint32_t tile_width_px;
 	uint32_t tile_height_px;
 	uint32_t tile_ascent_px;
+
+	uint32_t tile_size;
 
 	uint32_t tile_count_x;
 	uint32_t tile_count_y;
@@ -298,12 +302,16 @@ static void tix_update_tile_dims(Tix *tix, uint32_t width_px, uint32_t height_px
 	tix->grid.tile_width_px = width_px;
 	tix->grid.tile_height_px = height_px;
 	tix->grid.tile_ascent_px = ascent_px; // Includes the internal leading
-
-	tix->atlas.tile_size = tix->grid.tile_width_px * tix->grid.tile_height_px * ATLAS_PIXEL_SIZE;
-	tix->atlas.buf_size = (size_t)DIRECT_CODE_POINTS_COUNT * tix->atlas.tile_size;
+	tix->grid.tile_size = tix->grid.tile_width_px * tix->grid.tile_height_px * PIXEL_SIZE;
 
 	ASSERT(tix->grid.tile_width_px <= TILE_SIDE_PX_MAX);
 	ASSERT(tix->grid.tile_height_px <= TILE_SIDE_PX_MAX);
+	ASSERT(tix->grid.tile_size <= TILE_SIZE_MAX);
+
+	tix->atlas.tile_size = tix->grid.tile_width_px * tix->grid.tile_height_px * ATLAS_PIXEL_SIZE;
+	tix->atlas.buf_size = (size_t)DIRECT_CODE_POINTS_COUNT * tix->atlas.tile_size;
+	tix->atlas.tile_pitch_size = tix->grid.tile_width_px * ATLAS_PIXEL_SIZE;
+
 	ASSERT(tix->atlas.tile_size <= ATLAS_TILE_SIZE_MAX);
 	ASSERT(tix->atlas.buf_size <= (size_t)ATLAS_BUF_SIZE_MAX);
 }
