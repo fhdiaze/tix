@@ -794,6 +794,25 @@ static unsigned long WINAPI render_run(void *param)
 			was_caret_col_changed = 1U;
 		}
 
+		if (tix_input.keys[KEY_CODE_LOWBAR].ended_down) {
+			size_t char_col_idx = 0;
+			char *file_chars = (char *)file.buf;
+			while (char_col_idx < caret_line_newline_col_idx) {
+				size_t offset = tix->buffer.lines[tix->caret.line_idx].start_idx + char_col_idx;
+				ASSERT(offset < file.size);
+				char file_char = file_chars[offset];
+				if (file_char > DIRECT_CODE_POINT_MIN && file_char <= DIRECT_CODE_POINT_MAX) {
+					tix->caret.wanted_col_idx = CARET_WANTED_COL_IDX_END;
+					tix->caret.col_idx = char_col_idx;
+
+					break;
+				}
+
+				++char_col_idx;
+			}
+		}
+
+		// TODO(fredy): correct this to reflect the stick to the end of line behavior
 		if (tix_input.keys[KEY_CODE_DOLLAR].ended_down) {
 			if (tix->caret.col_idx + 1 < caret_line_newline_col_idx) {
 				tix->caret.col_idx = caret_line_newline_col_idx;
@@ -807,7 +826,7 @@ static unsigned long WINAPI render_run(void *param)
 		}
 
 		if (was_caret_col_changed) {
-			tix->caret.copy_col_idx = tix->caret.col_idx;
+			tix->caret.wanted_col_idx = tix->caret.col_idx;
 		}
 
 		if (was_caret_line_changed) {
@@ -815,7 +834,7 @@ static unsigned long WINAPI render_run(void *param)
 				tix->scroll_idx = tix->caret.line_idx;
 			}
 
-			tix->caret.col_idx = tix->caret.copy_col_idx;
+			tix->caret.col_idx = tix->caret.wanted_col_idx;
 
 			if (tix->caret.line_idx >= tix->scroll_idx + tix->grid.tile_count_y) {
 				tix->scroll_idx = tix->caret.line_idx - tix->grid.tile_count_y + 1;
@@ -841,6 +860,10 @@ static unsigned long WINAPI render_run(void *param)
 		//                       (float)tix->backbuf.width_px, (float)tix->backbuf.height_px, BG_COLOR);
 		for (unsigned tile_idx_y = 0; tile_idx_y < tix->grid.tile_count_y; ++tile_idx_y) {
 			size_t line_idx = tix->scroll_idx + tile_idx_y;
+			size_t newline_col_idx = 0;
+			if (line_idx < tix->buffer.lines_count) {
+				newline_col_idx = line_newline_col_idx(tix, &file, line_idx);
+			}
 			unsigned tile_min_y_px = tix->grid.tile_height_px * tile_idx_y;
 			AtlasIdx atlas_idx = {};
 			uint32_t bg_color = BG_COLOR;
@@ -861,96 +884,89 @@ static unsigned long WINAPI render_run(void *param)
 				char tile_char = ' ';
 				uint32_t tile_min_x_px = tile_idx_x * tix->grid.tile_width_px;
 
-				if (line_idx < tix->buffer.lines_count) {
-					size_t newline_col_idx = line_newline_col_idx(tix, &file, line_idx);
-					uint32_t was_non_blank_found = 0;
+				if (tile_idx_x < newline_col_idx) {
+					char *file_chars = (char *)file.buf;
+					size_t offset = tix->buffer.lines[line_idx].start_idx + tile_idx_x;
+					ASSERT(offset < file.size);
+					char file_char = file_chars[offset];
 
-					if (tile_idx_x < newline_col_idx) {
-						char *file_chars = (char *)file.buf;
-						size_t offset = tix->buffer.lines[line_idx].start_idx + tile_idx_x;
-						ASSERT(offset < file.size);
-						char file_char = file_chars[offset];
+					if (file_char >= DIRECT_CODE_POINT_MIN && file_char <= DIRECT_CODE_POINT_MAX) {
+						tile_char = file_char;
+					} else {
+						tile_char = ' '; // TOFU
+					}
 
-						if (line_idx == tix->caret.line_idx) {
-							if (file_char > DIRECT_CODE_POINT_MIN && file_char <= DIRECT_CODE_POINT_MAX) {
-								tile_char = file_char;
-								if (tix_input.keys[KEY_CODE_LOWBAR].ended_down && !was_non_blank_found) {
-									was_non_blank_found = 1U;
-									tix->caret.copy_col_idx = tile_idx_x;
-									tix->caret.col_idx = tile_idx_x;
-								}
-							}
-
-							if (tile_idx_x == tix->caret.col_idx &&
-							    (!tix_input.keys[KEY_CODE_LOWBAR].ended_down || was_non_blank_found)) {
-								fg_color = BG_COLOR;
-								bg_color = FG_COLOR;
-							} else if (tix->caret.col_idx > tile_idx_x && tile_idx_x + 1 >= newline_col_idx) {
-								tix->caret.col_idx = tile_idx_x;
-								fg_color = BG_COLOR;
-								bg_color = FG_COLOR;
-							} else {
-								fg_color = FG_COLOR;
-								bg_color = BG_COLOR;
-							}
+					if (line_idx == tix->caret.line_idx) {
+						if (tile_idx_x == tix->caret.col_idx) {
+							fg_color = BG_COLOR;
+							bg_color = FG_COLOR;
+						} else if (tix->caret.col_idx > tile_idx_x && tile_idx_x + 1 >= newline_col_idx) {
+							tix->caret.col_idx = tile_idx_x;
+							fg_color = BG_COLOR;
+							bg_color = FG_COLOR;
 						}
 					}
 
-					ASSERT(tile_char >= DIRECT_CODE_POINT_MIN && tile_char <= DIRECT_CODE_POINT_MAX);
-
-					atlas_idx.value = (unsigned char)tile_char - DIRECT_CODE_POINT_MIN;
-					// TODO(fredy): should we extract a function for this?
-					size_t atlas_offset = (size_t)atlas_idx.value * tix->atlas.tile_size;
-					ASSERT(atlas_offset < tix->atlas.buf_size);
-					tile_buf.buf = tix->atlas.buf + atlas_offset;
-					tile_buf.buf_size = tix->atlas.tile_size;
-
-					// TODO(fredy): what happen with width 1.5F?
-
-					// in memory: BB GG RR AA
-					size_t dst_pitch_size = tix->backbuf.pitch_size;
-					size_t src_pitch_size = tix->atlas.tile_pitch_size;
-					size_t dst_offset = (size_t)tile_min_x_px * PIXEL_SIZE + dst_pitch_size * tile_min_y_px;
-					size_t src_offset = (size_t)atlas_idx.value * tix->atlas.tile_size;
-
-					// TODO(fredy): should I use SIMD here?
-					size_t blit_width_px = min(tix->grid.tile_width_px, tix->backbuf.width_px - tile_min_x_px);
-					size_t blit_height_px = min(tix->grid.tile_height_px, tix->backbuf.height_px - tile_min_y_px);
-					for (size_t y = 0; y < blit_height_px; ++y) {
-						for (size_t x = 0; x < blit_width_px; ++x) {
-							size_t dst_px_offset = dst_offset + x * PIXEL_SIZE + y * dst_pitch_size;
-							size_t src_px_offset = src_offset + x * ATLAS_PIXEL_SIZE + y * src_pitch_size;
-							ASSERT(dst_px_offset < tix->backbuf.buf_size);
-							ASSERT(src_px_offset < tix->atlas.buf_size);
-
-							unsigned char *dst_px_ptr = (unsigned char *)tix->backbuf.buf + dst_px_offset;
-							unsigned char *src_px_ptr = (unsigned char *)tix->atlas.buf + src_px_offset;
-
-							float blend_factor = (float)(*src_px_ptr) / 64.0F;
-
-							// blue
-							float blended = (float)BLUE_BITS(fg_color) * blend_factor +
-							                (float)BLUE_BITS(bg_color) * (1.0F - blend_factor);
-							*dst_px_ptr = (uint8_t)(blended + 0.5F);
-
-							// green
-							++dst_px_ptr;
-							blended = (float)GREEN_BITS(fg_color) * blend_factor +
-							          (float)GREEN_BITS(bg_color) * (1.0F - blend_factor);
-							*dst_px_ptr = (uint8_t)(blended + 0.5F);
-
-							// red
-							++dst_px_ptr;
-							blended = (float)RED_BITS(fg_color) * blend_factor +
-							          (float)RED_BITS(bg_color) * (1.0F - blend_factor);
-							*dst_px_ptr = (uint8_t)(blended + 0.5F);
-						}
-
-						// bitmap_draw_border(&backbuf, (float)cell_min_x_px, (float)cell_min_y_px,
-						//                    (float)cell_blit_width_px, (float)cell_blit_height_px,
-						//                    0xFFFFFFU);
-					}
+				} else {
+					fg_color = FG_COLOR;
+					bg_color = BG_COLOR;
 				}
+
+				ASSERT(tile_char >= DIRECT_CODE_POINT_MIN && tile_char <= DIRECT_CODE_POINT_MAX);
+
+				atlas_idx.value = (unsigned char)tile_char - DIRECT_CODE_POINT_MIN;
+				// TODO(fredy): should we extract a function for this?
+				size_t atlas_offset = (size_t)atlas_idx.value * tix->atlas.tile_size;
+				ASSERT(atlas_offset < tix->atlas.buf_size);
+				tile_buf.buf = tix->atlas.buf + atlas_offset;
+				tile_buf.buf_size = tix->atlas.tile_size;
+
+				// TODO(fredy): what happen with width 1.5F?
+
+				// in memory: BB GG RR AA
+				size_t dst_pitch_size = tix->backbuf.pitch_size;
+				size_t src_pitch_size = tix->atlas.tile_pitch_size;
+				size_t dst_offset = (size_t)tile_min_x_px * PIXEL_SIZE + dst_pitch_size * tile_min_y_px;
+				size_t src_offset = (size_t)atlas_idx.value * tix->atlas.tile_size;
+
+				// TODO(fredy): should I use SIMD here?
+				size_t blit_width_px = min(tix->grid.tile_width_px, tix->backbuf.width_px - tile_min_x_px);
+				size_t blit_height_px = min(tix->grid.tile_height_px, tix->backbuf.height_px - tile_min_y_px);
+				for (size_t y = 0; y < blit_height_px; ++y) {
+					for (size_t x = 0; x < blit_width_px; ++x) {
+						size_t dst_px_offset = dst_offset + x * PIXEL_SIZE + y * dst_pitch_size;
+						size_t src_px_offset = src_offset + x * ATLAS_PIXEL_SIZE + y * src_pitch_size;
+						ASSERT(dst_px_offset < tix->backbuf.buf_size);
+						ASSERT(src_px_offset < tix->atlas.buf_size);
+
+						unsigned char *dst_px_ptr = (unsigned char *)tix->backbuf.buf + dst_px_offset;
+						unsigned char *src_px_ptr = (unsigned char *)tix->atlas.buf + src_px_offset;
+
+						float blend_factor = (float)(*src_px_ptr) / 64.0F;
+
+						// blue
+						float blended = (float)BLUE_BITS(fg_color) * blend_factor +
+						                (float)BLUE_BITS(bg_color) * (1.0F - blend_factor);
+						*dst_px_ptr = (uint8_t)(blended + 0.5F);
+
+						// green
+						++dst_px_ptr;
+						blended = (float)GREEN_BITS(fg_color) * blend_factor +
+						          (float)GREEN_BITS(bg_color) * (1.0F - blend_factor);
+						*dst_px_ptr = (uint8_t)(blended + 0.5F);
+
+						// red
+						++dst_px_ptr;
+						blended = (float)RED_BITS(fg_color) * blend_factor +
+						          (float)RED_BITS(bg_color) * (1.0F - blend_factor);
+						*dst_px_ptr = (uint8_t)(blended + 0.5F);
+					}
+
+					// bitmap_draw_border(&backbuf, (float)cell_min_x_px, (float)cell_min_y_px,
+					//                    (float)cell_blit_width_px, (float)cell_blit_height_px,
+					//                    0xFFFFFFU);
+				}
+
 			} // for tile grid columns
 		} // for tile grid rows
 

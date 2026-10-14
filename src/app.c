@@ -8,6 +8,7 @@
 #define MEMORY_BASE_ADDRESS (nullptr)
 #endif // MEMORY_BASE_ADDRESS
 
+#define CARET_WANTED_COL_IDX_END SIZE_MAX
 #define PIXEL_SIZE 4
 #define BACKBUF_SIZE_MAX (7680 * 4320 * PIXEL_SIZE)
 #define BUFFER_POOL_SIZE_MAX GB_TO_BYTE(3ULL)
@@ -201,7 +202,7 @@ typedef struct Storage {
 
 typedef struct Caret {
 	size_t line_idx;
-	size_t copy_col_idx;
+	size_t wanted_col_idx;
 	size_t col_idx;
 	uint32_t flags;
 } Caret;
