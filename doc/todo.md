@@ -5,7 +5,7 @@ Working checklist. this file tracks *what's next* against the current state of t
 Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 
 ---
-- [ ] style: check convention for enums
+- [x] style: check convention for enums
 - [x] vim: $ command
 - [x] vim: _ command
 - [ ] vim: w command

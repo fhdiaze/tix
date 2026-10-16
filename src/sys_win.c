@@ -740,7 +740,6 @@ static unsigned long WINAPI render_run(void *param)
 		// Process input
 		// =============================================================================
 		uint32_t was_caret_line_changed = 0U;
-		uint32_t was_caret_col_changed = 0U;
 		if (tix_input.keys[KEY_CODE_K].ended_down && tix->caret.line_idx > 0) {
 			--tix->caret.line_idx;
 			was_caret_line_changed = 1U;
@@ -783,7 +782,7 @@ static unsigned long WINAPI render_run(void *param)
 			if (tix->caret.col_idx > 0) {
 				--tix->caret.col_idx;
 			}
-			was_caret_col_changed = 1U;
+			tix->caret.wanted_col_idx = tix->caret.col_idx;
 		}
 
 		size_t caret_line_newline_col_idx = line_newline_col_idx(tix, &file, tix->caret.line_idx);
@@ -791,7 +790,7 @@ static unsigned long WINAPI render_run(void *param)
 			if (tix->caret.col_idx + 1 < caret_line_newline_col_idx) {
 				++tix->caret.col_idx;
 			}
-			was_caret_col_changed = 1U;
+			tix->caret.wanted_col_idx = tix->caret.col_idx;
 		}
 
 		if (tix_input.keys[KEY_CODE_LOWBAR].ended_down) {
@@ -802,7 +801,7 @@ static unsigned long WINAPI render_run(void *param)
 				ASSERT(offset < file.size);
 				char file_char = file_chars[offset];
 				if (file_char > DIRECT_CODE_POINT_MIN && file_char <= DIRECT_CODE_POINT_MAX) {
-					tix->caret.wanted_col_idx = CARET_WANTED_COL_IDX_END;
+					tix->caret.wanted_col_idx = char_col_idx;
 					tix->caret.col_idx = char_col_idx;
 
 					break;
@@ -812,32 +811,35 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		}
 
-		// TODO(fredy): correct this to reflect the stick to the end of line behavior
 		if (tix_input.keys[KEY_CODE_DOLLAR].ended_down) {
-			if (tix->caret.col_idx + 1 < caret_line_newline_col_idx) {
+			if (caret_line_newline_col_idx) {
+				tix->caret.col_idx = caret_line_newline_col_idx - 1;
+			} else {
 				tix->caret.col_idx = caret_line_newline_col_idx;
 			}
-			was_caret_col_changed = 1U;
+
+			tix->caret.wanted_col_idx = CARET_WANTED_COL_IDX_END;
 		}
 
 		if (tix_input.keys[KEY_CODE_ZERO].ended_down) {
 			tix->caret.col_idx = 0;
-			was_caret_col_changed = 1U;
-		}
-
-		if (was_caret_col_changed) {
 			tix->caret.wanted_col_idx = tix->caret.col_idx;
 		}
 
 		if (was_caret_line_changed) {
 			if (tix->caret.line_idx < tix->scroll_idx) {
 				tix->scroll_idx = tix->caret.line_idx;
+			} else {
+				size_t relative_line_idx = tix->caret.line_idx - tix->scroll_idx;
+				if (relative_line_idx  >= tix->grid.tile_count_y) {
+					tix->scroll_idx = tix->caret.line_idx - tix->grid.tile_count_y + 1;
+				}
 			}
 
-			tix->caret.col_idx = tix->caret.wanted_col_idx;
-
-			if (tix->caret.line_idx >= tix->scroll_idx + tix->grid.tile_count_y) {
-				tix->scroll_idx = tix->caret.line_idx - tix->grid.tile_count_y + 1;
+			if (tix->caret.wanted_col_idx > caret_line_newline_col_idx) {
+				tix->caret.col_idx = caret_line_newline_col_idx > 0 ? caret_line_newline_col_idx - 1 : 0;
+			} else {
+				tix->caret.col_idx = tix->caret.wanted_col_idx;
 			}
 		}
 
@@ -856,9 +858,14 @@ static unsigned long WINAPI render_run(void *param)
 		ASSERT((tix->buffer.lines_count == 0 && tix->caret.line_idx == 0) ||
 		       tix->caret.line_idx < tix->buffer.lines_count);
 
+		ASSERT(tix->scroll_idx >= 0);
+		ASSERT(tix->scroll_idx < tix->buffer.lines_count);
+
 		// bitmap_draw_rectangle(&tix->backbuf.buf, tix->backbuf.width_px, tix->backbuf.height_px, 0.0F, 0.0F,
 		//                       (float)tix->backbuf.width_px, (float)tix->backbuf.height_px, BG_COLOR);
-		for (unsigned tile_idx_y = 0; tile_idx_y < tix->grid.tile_count_y; ++tile_idx_y) {
+		uint32_t bg_color = BG_COLOR;
+		uint32_t fg_color = FG_COLOR;
+		for (unsigned tile_idx_y = 0; tix->grid.tile_height_px * tile_idx_y < tix->backbuf.height_px; ++tile_idx_y) {
 			size_t line_idx = tix->scroll_idx + tile_idx_y;
 			size_t newline_col_idx = 0;
 			if (line_idx < tix->buffer.lines_count) {
@@ -866,8 +873,6 @@ static unsigned long WINAPI render_run(void *param)
 			}
 			unsigned tile_min_y_px = tix->grid.tile_height_px * tile_idx_y;
 			AtlasIdx atlas_idx = {};
-			uint32_t bg_color = BG_COLOR;
-			uint32_t fg_color = FG_COLOR;
 
 			// =============================================================================
 			// Shaping
@@ -880,7 +885,7 @@ static unsigned long WINAPI render_run(void *param)
 			// Render
 			// =============================================================================
 			Bytes tile_buf = {};
-			for (uint32_t tile_idx_x = 0; tile_idx_x < tix->grid.tile_count_x; ++tile_idx_x) {
+			for (uint32_t tile_idx_x = 0; tile_idx_x * tix->grid.tile_width_px < tix->backbuf.width_px; ++tile_idx_x) {
 				char tile_char = ' ';
 				uint32_t tile_min_x_px = tile_idx_x * tix->grid.tile_width_px;
 
@@ -895,18 +900,11 @@ static unsigned long WINAPI render_run(void *param)
 					} else {
 						tile_char = ' '; // TOFU
 					}
+				}
 
-					if (line_idx == tix->caret.line_idx) {
-						if (tile_idx_x == tix->caret.col_idx) {
-							fg_color = BG_COLOR;
-							bg_color = FG_COLOR;
-						} else if (tix->caret.col_idx > tile_idx_x && tile_idx_x + 1 >= newline_col_idx) {
-							tix->caret.col_idx = tile_idx_x;
-							fg_color = BG_COLOR;
-							bg_color = FG_COLOR;
-						}
-					}
-
+				if (line_idx == tix->caret.line_idx && tile_idx_x == tix->caret.col_idx) {
+					fg_color = BG_COLOR;
+					bg_color = FG_COLOR;
 				} else {
 					fg_color = FG_COLOR;
 					bg_color = BG_COLOR;
