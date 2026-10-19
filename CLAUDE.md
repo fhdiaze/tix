@@ -48,7 +48,7 @@ rendering, performance, CPU architecture and text-editor data structures. Shippi
 - Inspired by [Kakoune](https://kakoune.org/why-kakoune/why-kakoune.html) and
   [kilo](https://github.com/antirez/kilo).
 - Architecture principle (`doc/techspec.md`):
-  `file bytes → line index → cell grid (codepoint, fg, bg, flags) → glyph atlas (coverage tiles) → backend seam → CPU or GPU backend`.
+  `file bytes → line index → cell grid (rune, fg, bg, flags) → glyph atlas (coverage tiles) → backend seam → CPU or GPU backend`.
   - The atlas stores **coverage** ("how much ink"), not pre-coloured pixels, so the blend is identical on CPU and GPU.
   - Cursor, selection and scroll only write cell flags and colours. They know nothing about rendering.
   - Planned backend seam: `Init / Resize / Present` function pointers, swapped by a pointer.

@@ -1,3 +1,4 @@
+#include "sys.h"
 #include <stdint.h>
 
 #include "lib.h"
@@ -17,17 +18,28 @@
 #define TILE_SIDE_PX_MAX 256
 #define TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * PIXEL_SIZE)
 #define KEY_STACK_COUNT_MAX 8
-#define LINE_COUNT_MAX 100000000
+#define LINES_COUNT_MAX 100000000
 #define FILE_PATH_SIZE_MAX 4096
-#define DIRECT_CODE_POINT_MIN 32  // SP (Space)
-#define DIRECT_CODE_POINT_MAX 126 // ~
-#define DIRECT_CODE_POINTS_COUNT (DIRECT_CODE_POINT_MAX - DIRECT_CODE_POINT_MIN + 1)
+#define RUNE_DIRECT_MIN 32  // SP (Space)
+#define RUNE_DIRECT_MAX 126 // ~ (Tilde)
+#define RUNE_DIRECT_COUNT (RUNE_DIRECT_MAX - RUNE_DIRECT_MIN + 1)
+#define RUNE_IS_DIRECT(c) (c >= RUNE_DIRECT_MIN && c <= RUNE_DIRECT_MAX)
 #define ATLAS_PIXEL_SIZE 1
 #define ATLAS_TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE)
-#define ATLAS_BUF_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE * DIRECT_CODE_POINTS_COUNT)
+#define ATLAS_BUF_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE * RUNE_DIRECT_COUNT)
 
-constexpr char WORD_CHAR_SET[] = { 'a', 'b' };
-constexpr char WHITE_SPACE_CHAR_SET[] = { ' ', '	' };
+typedef enum RuneFlag : uint32_t {
+	RUNE_FLAG_INVALID = (1U << 0U),
+	RUNE_FLAG_WORD = (1U << 1U),
+	RUNE_FLAG_PUNCT = (1U << 2U),
+	RUNE_FLAG_SP = (1U << 3U),
+	RUNE_FLAG_SURROGATE = (1U << 4U),
+	RUNE_FLAG_DIGIT = (1U << 5U),
+	RUNE_FLAG_UL = (1U << 6U),
+	RUNE_FLAG_LL = (1U << 7U),
+	RUNE_FLAG_CARETABLE = (1U << 8U),
+	RUNE_FLAG_END = (1U << 9U),
+} RuneFlag;
 
 typedef enum KeyCode : uint8_t {
 	KEY_CODE_SP,
@@ -179,6 +191,14 @@ typedef struct AtlasIdx {
 	uint32_t value;
 } AtlasIdx;
 
+typedef struct Rune {
+	uint32_t value;
+} Rune;
+
+typedef struct RuneFlags {
+	uint32_t flags;
+} RuneFlags;
+
 typedef struct Tile {
 	AtlasIdx glyph_idx;
 
@@ -200,10 +220,14 @@ typedef struct Storage {
 	uint8_t is_initialized;
 } Storage;
 
-typedef struct Caret {
+typedef struct TxtPt {
 	size_t line_idx;
-	size_t wanted_col_idx;
 	size_t col_idx;
+} TxtPt;
+
+typedef struct Caret {
+	TxtPt pos;
+	size_t wanted_col_idx;
 	uint32_t flags;
 } Caret;
 
@@ -235,7 +259,7 @@ typedef struct Backbuf {
 } Backbuf;
 
 typedef struct Buffer {
-	Line lines[LINE_COUNT_MAX];
+	Line lines[LINES_COUNT_MAX];
 	size_t lines_count;
 } Buffer;
 
@@ -257,9 +281,9 @@ typedef struct Tix {
 	Atlas atlas;
 	Caret caret;
 	size_t scroll_idx;
-	size_t lines_count;
 	Backbuf backbuf;
 	Buffer buffer;
+	ReadFileResult file;
 	TileGrid grid;
 	KeyState stack_key_states[KEY_STACK_COUNT_MAX];
 	uint16_t stack_key_count;
@@ -310,9 +334,81 @@ static void tix_update_tile_dims(Tix *tix, uint32_t width_px, uint32_t height_px
 	ASSERT(tix->grid.tile_size <= TILE_SIZE_MAX);
 
 	tix->atlas.tile_size = tix->grid.tile_width_px * tix->grid.tile_height_px * ATLAS_PIXEL_SIZE;
-	tix->atlas.buf_size = (size_t)DIRECT_CODE_POINTS_COUNT * tix->atlas.tile_size;
+	tix->atlas.buf_size = (size_t)RUNE_DIRECT_COUNT * tix->atlas.tile_size;
 	tix->atlas.tile_pitch_size = tix->grid.tile_width_px * ATLAS_PIXEL_SIZE;
 
 	ASSERT(tix->atlas.tile_size <= ATLAS_TILE_SIZE_MAX);
 	ASSERT(tix->atlas.buf_size <= (size_t)ATLAS_BUF_SIZE_MAX);
+}
+
+inline static uint32_t txt_pt_are_equal(const TxtPt *const one, const TxtPt *const other)
+{
+	uint32_t result = one->line_idx == other->line_idx && one->col_idx == other->col_idx;
+
+	return result;
+}
+
+inline static size_t line_newline_col_idx(Tix *tix, ReadFileResult *file, size_t line_idx)
+{
+	size_t result = tix->buffer.lines[line_idx].newline_idx - tix->buffer.lines[line_idx].start_idx;
+
+	if (result > 0 && *((unsigned char *)file->buf + tix->buffer.lines[line_idx].newline_idx - 1) == '\r') {
+		--result;
+	}
+
+	return result;
+}
+
+static RuneFlags rune_get_flags(Rune rune)
+{
+	RuneFlags rune_flags = {};
+
+	if (rune.value == ' ' || rune.value == '\n' || rune.value == '\r' || rune.value == '\t') {
+		rune_flags.flags |= RUNE_FLAG_SP;
+	}
+	if ('0' <= rune.value && rune.value <= '9') {
+		rune_flags.flags |= RUNE_FLAG_DIGIT;
+	} else if ('A' <= rune.value && rune.value <= 'Z') {
+		rune_flags.flags |= RUNE_FLAG_UL;
+	} else if ('a' <= rune.value && rune.value <= 'z') {
+		rune_flags.flags |= RUNE_FLAG_LL;
+	} else if (rune.value == '.' || rune.value == '_') {
+		rune_flags.flags |= RUNE_FLAG_PUNCT;
+	}
+
+	return rune_flags;
+}
+inline static RuneFlag rune_get_flag(RuneFlags flags, RuneFlag flag)
+{
+	RuneFlag result = flags.flags && flag;
+
+	return result;
+}
+
+inline static Rune buffer_get_rune(Tix *tix, ReadFileResult *file, TxtPt pos)
+{
+	size_t offset = tix->buffer.lines[pos.line_idx].start_idx + pos.col_idx;
+	ASSERT(offset < file->size);
+	char *file_chars = (char *)file->buf;
+	Rune rune = { .value = (unsigned char)file_chars[offset] };
+
+	return rune;
+}
+
+inline static TxtPt buffer_get_next_txt_pt(Tix *tix, ReadFileResult *file, TxtPt pos)
+{
+	TxtPt next_pos = pos;
+
+	if (pos.line_idx < tix->buffer.lines_count) {
+		size_t newline_col_idx = line_newline_col_idx(tix, file, pos.line_idx);
+
+		if (pos.col_idx < newline_col_idx) {
+			++next_pos.col_idx;
+		} else if (pos.line_idx + 1 < tix->buffer.lines_count) {
+			++next_pos.line_idx;
+			next_pos.col_idx = 0;
+		}
+	}
+
+	return next_pos;
 }

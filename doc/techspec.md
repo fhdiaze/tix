@@ -3,7 +3,7 @@
 ## Guiding principle
 
 ```
-   file bytes → line index → cell grid (codepoint, fg, bg, flags)
+   file bytes → line index → cell grid (rune, fg, bg, flags)
                                     │
                                     ▼
                  glyph atlas (unique glyphs rasterized once,
@@ -51,7 +51,7 @@ running as a CPU loop or a GPU shader.
     - file
     - group
     - buffer
-- primitives: bytes -> lines -> runs -> codePoints -> grapheme (char) -> glyph
+- primitives: bytes -> lines -> runs -> runes -> grapheme (char) -> glyph
 
 ## Rules
 

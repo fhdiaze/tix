@@ -51,6 +51,9 @@
 #define ASSERT(cond) ((void)0)
 #endif // DEBUG
 
+#define TRUE 1;
+#define FALSE 0;
+
 // =============================================================================
 // Bit operations
 // =============================================================================
@@ -452,6 +455,11 @@ inline void memory_zero(size_t size, void *ptr)
 // =============================================================================
 #define STRINGIFY(n) #n
 #define XSTRINGIFY(n) STRINGIFY(n)
+
+typedef struct StringAscii {
+	const char *const chars;
+	const size_t chars_count;
+} StringAscii;
 
 // =============================================================================
 // Logging
