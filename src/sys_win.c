@@ -807,37 +807,37 @@ static unsigned long WINAPI render_run(void *param)
 			} else {
 				tix->caret.pos.col_idx = caret_line_newline_col_idx;
 			}
-
 			tix->caret.wanted_col_idx = CARET_WANTED_COL_IDX_END;
 		}
 
 		if (tix_input.keys[KEY_CODE_W].ended_down) {
-			TxtPt current_pos = tix->caret.pos;
+			TxtPt current_pos = {};
 			TxtPt next_pos = tix->caret.pos;
-			Rune current_rune = {};
-			Rune next_rune = {};
-			RuneFlags current_rune_flags = {};
-			RuneFlags next_rune_flags = {};
-			unsigned class_changes_count = 0;
-
-			do {
+			for (;;) {
 				current_pos = next_pos;
 				next_pos = buffer_get_next_txt_pt(tix, &tix->file, current_pos);
 
-				current_rune = buffer_get_rune(tix, &tix->file, current_pos);
-				next_rune = buffer_get_rune(tix, &tix->file, next_pos);
-
-				current_rune_flags = rune_get_flags(current_rune);
-				next_rune_flags = rune_get_flags(next_rune);
-
-				if (rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
-				    rune_get_flag(next_rune_flags, RUNE_FLAG_WORD)) {
-					++class_changes_count;
+				if (txt_pt_are_equal(&current_pos, &next_pos)) {
+					break;
 				}
-				if (!rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
+
+				Rune current_rune = buffer_get_rune(tix, &tix->file, current_pos);
+				Rune next_rune = buffer_get_rune(tix, &tix->file, next_pos);
+
+				RuneFlags current_rune_flags = rune_get_flags(current_rune);
+				RuneFlags next_rune_flags = rune_get_flags(next_rune);
+
+				if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
 					tix->caret.pos = next_pos;
 				}
-			} while (class_changes_count < 1 && !txt_pt_are_equal(&current_pos, &next_pos));
+
+				if ((rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
+				         rune_get_flag(next_rune_flags, RUNE_FLAG_WORD) ||
+				     rune_get_flag(current_rune_flags, RUNE_FLAG_SP) != rune_get_flag(next_rune_flags, RUNE_FLAG_SP)) &&
+				    !rune_get_flag(next_rune_flags, RUNE_FLAG_SP)) {
+					break;
+				}
+			}
 		}
 
 		if (tix_input.keys[KEY_CODE_ZERO].ended_down) {

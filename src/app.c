@@ -363,24 +363,33 @@ static RuneFlags rune_get_flags(Rune rune)
 {
 	RuneFlags rune_flags = {};
 
-	if (rune.value == ' ' || rune.value == '\n' || rune.value == '\r' || rune.value == '\t') {
+	if (rune.value == '\n' || rune.value == '\r' || rune.value == '\t') {
 		rune_flags.flags |= RUNE_FLAG_SP;
-	}
-	if ('0' <= rune.value && rune.value <= '9') {
+	} else if (rune.value == ' ') {
+		rune_flags.flags |= RUNE_FLAG_SP;
+		rune_flags.flags |= RUNE_FLAG_CARETABLE;
+	} else if ('0' <= rune.value && rune.value <= '9') {
 		rune_flags.flags |= RUNE_FLAG_DIGIT;
+		rune_flags.flags |= RUNE_FLAG_WORD;
+		rune_flags.flags |= RUNE_FLAG_CARETABLE;
 	} else if ('A' <= rune.value && rune.value <= 'Z') {
 		rune_flags.flags |= RUNE_FLAG_UL;
+		rune_flags.flags |= RUNE_FLAG_WORD;
+		rune_flags.flags |= RUNE_FLAG_CARETABLE;
 	} else if ('a' <= rune.value && rune.value <= 'z') {
 		rune_flags.flags |= RUNE_FLAG_LL;
+		rune_flags.flags |= RUNE_FLAG_WORD;
+		rune_flags.flags |= RUNE_FLAG_CARETABLE;
 	} else if (rune.value == '.' || rune.value == '_') {
 		rune_flags.flags |= RUNE_FLAG_PUNCT;
+		rune_flags.flags |= RUNE_FLAG_CARETABLE;
 	}
 
 	return rune_flags;
 }
 inline static RuneFlag rune_get_flag(RuneFlags flags, RuneFlag flag)
 {
-	RuneFlag result = flags.flags && flag;
+	RuneFlag result = flags.flags & flag;
 
 	return result;
 }
