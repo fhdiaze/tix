@@ -359,27 +359,29 @@ inline static size_t line_newline_col_idx(Tix *tix, ReadFileResult *file, size_t
 	return result;
 }
 
-static RuneFlags rune_get_flags(Rune rune)
+static RuneFlags rune_get_flags(Tix *tix, ReadFileResult *file, TxtPt *pos, Rune rune)
 {
 	RuneFlags rune_flags = {};
 
-	if (rune.value == '\n' || rune.value == '\r' || rune.value == '\t') {
-		rune_flags.flags |= RUNE_FLAG_SP;
-	} else if (rune.value == ' ') {
-		rune_flags.flags |= RUNE_FLAG_SP;
+	if (rune.value == '\n' || rune.value == '\r') {
+		if (line_newline_col_idx(tix, file, pos->line_idx) == 0 && pos->col_idx == 0) {
+			rune_flags.flags |= RUNE_FLAG_CARETABLE;
+		}
+	} else {
 		rune_flags.flags |= RUNE_FLAG_CARETABLE;
+	}
+
+	if (rune.value == ' ' || rune.value == '\n' || rune.value == '\r' || rune.value == '\t') {
+		rune_flags.flags |= RUNE_FLAG_SP;
 	} else if ('0' <= rune.value && rune.value <= '9') {
 		rune_flags.flags |= RUNE_FLAG_DIGIT;
 		rune_flags.flags |= RUNE_FLAG_WORD;
-		rune_flags.flags |= RUNE_FLAG_CARETABLE;
 	} else if ('A' <= rune.value && rune.value <= 'Z') {
 		rune_flags.flags |= RUNE_FLAG_UL;
 		rune_flags.flags |= RUNE_FLAG_WORD;
-		rune_flags.flags |= RUNE_FLAG_CARETABLE;
 	} else if ('a' <= rune.value && rune.value <= 'z') {
 		rune_flags.flags |= RUNE_FLAG_LL;
 		rune_flags.flags |= RUNE_FLAG_WORD;
-		rune_flags.flags |= RUNE_FLAG_CARETABLE;
 	} else if (rune.value == '.' || rune.value == '_') {
 		rune_flags.flags |= RUNE_FLAG_PUNCT;
 		rune_flags.flags |= RUNE_FLAG_CARETABLE;
@@ -387,6 +389,7 @@ static RuneFlags rune_get_flags(Rune rune)
 
 	return rune_flags;
 }
+
 inline static RuneFlag rune_get_flag(RuneFlags flags, RuneFlag flag)
 {
 	RuneFlag result = flags.flags & flag;

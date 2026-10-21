@@ -510,7 +510,7 @@ static unsigned long WINAPI render_run(void *param)
 		arena_rewind(&init_mark);
 	}
 
-	const char *file_path = "./ends_with_newline.txt";
+	const char *file_path = "./test.txt";
 
 	FILETIME file_previous_write_time = {};
 	LARGE_INTEGER performance_frequency;
@@ -824,17 +824,18 @@ static unsigned long WINAPI render_run(void *param)
 				Rune current_rune = buffer_get_rune(tix, &tix->file, current_pos);
 				Rune next_rune = buffer_get_rune(tix, &tix->file, next_pos);
 
-				RuneFlags current_rune_flags = rune_get_flags(current_rune);
-				RuneFlags next_rune_flags = rune_get_flags(next_rune);
+				RuneFlags current_rune_flags = rune_get_flags(tix, &tix->file, &current_pos, current_rune);
+				RuneFlags next_rune_flags = rune_get_flags(tix, &tix->file, &next_pos, next_rune);
 
 				if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
 					tix->caret.pos = next_pos;
 				}
 
-				if ((rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
-				         rune_get_flag(next_rune_flags, RUNE_FLAG_WORD) ||
-				     rune_get_flag(current_rune_flags, RUNE_FLAG_SP) != rune_get_flag(next_rune_flags, RUNE_FLAG_SP)) &&
-				    !rune_get_flag(next_rune_flags, RUNE_FLAG_SP)) {
+				if (((rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
+				          rune_get_flag(next_rune_flags, RUNE_FLAG_WORD) ||
+				      rune_get_flag(current_rune_flags, RUNE_FLAG_SP) != rune_get_flag(next_rune_flags, RUNE_FLAG_SP)) &&
+				     !rune_get_flag(next_rune_flags, RUNE_FLAG_SP)) ||
+				    line_newline_col_idx(tix, &tix->file, next_pos.line_idx) == 0) {
 					break;
 				}
 			}
