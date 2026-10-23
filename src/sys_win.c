@@ -510,7 +510,7 @@ static unsigned long WINAPI render_run(void *param)
 		arena_rewind(&init_mark);
 	}
 
-	const char *file_path = "./test.txt";
+	const char *file_path = "./ends_with_newline.txt";
 
 	FILETIME file_previous_write_time = {};
 	LARGE_INTEGER performance_frequency;
@@ -631,10 +631,11 @@ static unsigned long WINAPI render_run(void *param)
 		uint32_t was_file_updated = 0U;
 		FILETIME current_write_time = {};
 		if (!tix->file.buf) {
+			tix->buffer.lines_count = 0;
 			tix->file = sys_file_read(&tix->buffers_arena, file_path);
 			if (tix->file.buf) {
 				file_get_last_write_time(file_path, &file_previous_write_time);
-				was_file_updated = 1U;
+				was_file_updated = TRUE;
 			} else {
 				LOG_ERROR("The file %s could not be opened", file_path);
 			}
@@ -642,10 +643,11 @@ static unsigned long WINAPI render_run(void *param)
 			if (CompareFileTime(&current_write_time, &file_previous_write_time) > 0) {
 				file_free_memory(&tix->buffers_arena, &tix->file);
 
+				tix->buffer.lines_count = 0;
 				tix->file = sys_file_read(&tix->buffers_arena, file_path);
 
 				if (tix->file.buf) {
-					was_file_updated = 1U;
+					was_file_updated = TRUE;
 					file_previous_write_time = current_write_time;
 				} else {
 					LOG_ERROR("The file %s could not be opened", file_path);
@@ -663,19 +665,18 @@ static unsigned long WINAPI render_run(void *param)
 				0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
 				0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
 			};
-			char *buf = (char *)tix->file.buf;
-			size_t remaining_size = tix->file.size;
+
+			size_t file_offset = 0;
 
 			__m256i newline_needle = _mm256_set1_epi8('\n');
 			__m256i complex_mask = _mm256_set1_epi8((char)0x80);
-			size_t line_start_idx = 0;
-			size_t last_byte_idx = 0;
+			size_t line_offset = 0;
 
-			while (tix->buffer.lines_count < LINES_COUNT_MAX && remaining_size) {
+			while (tix->buffer.lines_count < LINES_COUNT_MAX && file_offset < tix->file.size) {
 				__m256i contains_complex = _mm256_setzero_si256();
 
-				while (remaining_size > 32) {
-					__m256i batch = _mm256_loadu_si256((__m256i *)buf);
+				while (file_offset + 32 < tix->file.size) {
+					__m256i batch = _mm256_loadu_si256((__m256i *)((unsigned char *)(tix->file.buf) + file_offset));
 
 					__m256i test_newline = _mm256_cmpeq_epi8(batch, newline_needle);
 					__m256i test_complex = _mm256_and_si256(batch, complex_mask);
@@ -694,37 +695,41 @@ static unsigned long WINAPI render_run(void *param)
 						tix->buffer.lines[tix->buffer.lines_count].contains_complex_chars |=
 							(uint8_t)!_mm256_testz_si256(contains_complex, contains_complex);
 
-						buf += first_newline_idx;
-						remaining_size -= first_newline_idx;
+						file_offset += first_newline_idx;
 
 						break;
 					}
 
 					contains_complex = _mm256_or_si256(contains_complex, test_complex);
 
-					buf += 32;
-					remaining_size -= 32;
+					file_offset += 32;
 				}
 
-				if (buf[0] == '\n' || remaining_size == 1) {
-					last_byte_idx = (size_t)(buf - (char *)tix->file.buf);
-
+				if (((char *)(tix->file.buf))[file_offset] == '\n' || file_offset + 1 == tix->file.size) {
+					ASSERT(file_offset < tix->file.size);
 					ASSERT(tix->buffer.lines_count < LINES_COUNT_MAX);
 
-					tix->buffer.lines[tix->buffer.lines_count].newline_idx = last_byte_idx;
-					tix->buffer.lines[tix->buffer.lines_count].start_idx = line_start_idx;
+					tix->buffer.lines[tix->buffer.lines_count].file_offset = line_offset;
+					tix->buffer.lines[tix->buffer.lines_count].size = file_offset ? file_offset - line_offset + 1 : 0;
 
-					line_start_idx = last_byte_idx + 1;
+					line_offset = file_offset + 1;
 
 					++tix->buffer.lines_count;
-				} else if (buf[0] < 0) {
+
+					if (((char *)(tix->file.buf))[file_offset] == '\n' && file_offset + 1 == tix->file.size) {
+						tix->buffer.lines[tix->buffer.lines_count].file_offset = line_offset;
+						tix->buffer.lines[tix->buffer.lines_count].size = 0;
+						++tix->buffer.lines_count;
+					}
+				} else if (((char *)(tix->file.buf))[file_offset] < 0) {
 					tix->buffer.lines[tix->buffer.lines_count].contains_complex_chars = 1U;
 				}
 
-				++buf;
-				--remaining_size;
+				++file_offset;
 			}
 		}
+
+		LOG_INFO("The file has %zu lines", tix->buffer.lines_count);
 
 		// =============================================================================
 		// Process input
@@ -763,6 +768,97 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		}
 
+		if (tix_input.keys[KEY_CODE_E].ended_down) {
+			if (tix->stack_key_count == 1 && tix->stack_key_codes[0] == KEY_CODE_G) {
+				TxtPt current_pos = {};
+				TxtPt next_pos = tix->caret.pos;
+				uint32_t boundary_count = 0;
+
+				for (;;) {
+					current_pos = next_pos;
+					next_pos = txt_pt_prev(tix, current_pos);
+
+					if (txt_pt_are_equal(&current_pos, &next_pos)) {
+						break;
+					}
+
+					Rune current_rune = buffer_get_rune(tix, &tix->file, current_pos);
+					Rune next_rune = buffer_get_rune(tix, &tix->file, next_pos);
+
+					RuneFlags current_rune_flags = rune_get_flags(tix, &current_pos, current_rune);
+					RuneFlags next_rune_flags = rune_get_flags(tix, &next_pos, next_rune);
+
+					if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
+						tix->caret.pos = next_pos;
+					}
+
+					uint32_t word_to_nonspace = rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
+					                                rune_get_flag(next_rune_flags, RUNE_FLAG_WORD) &&
+					                            !rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
+					uint32_t space_to_any = rune_get_flag(current_rune_flags, RUNE_FLAG_SP) !=
+					                        rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
+					uint32_t any_to_emptyline = next_pos.col_idx == 0 &&
+					                            (next_rune.value == '\n' || next_rune.value == '\r' ||
+					                             tix->buffer.lines[next_pos.line_idx].size == 0);
+
+					if (word_to_nonspace || space_to_any) {
+						++boundary_count;
+					}
+
+					if (boundary_count > 1 || any_to_emptyline) {
+						break;
+					}
+
+					if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
+						tix->caret.pos = next_pos;
+					}
+				}
+			} else {
+				TxtPt current_pos = {};
+				TxtPt next_pos = tix->caret.pos;
+				uint32_t boundary_count = 0;
+
+				for (;;) {
+					current_pos = next_pos;
+					next_pos = txt_pt_next(tix, current_pos);
+
+					if (txt_pt_are_equal(&current_pos, &next_pos)) {
+						break;
+					}
+
+					Rune current_rune = buffer_get_rune(tix, &tix->file, current_pos);
+					Rune next_rune = buffer_get_rune(tix, &tix->file, next_pos);
+
+					RuneFlags current_rune_flags = rune_get_flags(tix, &current_pos, current_rune);
+					RuneFlags next_rune_flags = rune_get_flags(tix, &next_pos, next_rune);
+
+					if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
+						tix->caret.pos = next_pos;
+					}
+
+					uint32_t word_to_nonspace = rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
+					                                rune_get_flag(next_rune_flags, RUNE_FLAG_WORD) &&
+					                            !rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
+					uint32_t space_to_any = rune_get_flag(current_rune_flags, RUNE_FLAG_SP) !=
+					                        rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
+					uint32_t any_to_emptyline = next_pos.col_idx == 0 &&
+					                            (next_rune.value == '\n' || next_rune.value == '\r' ||
+					                             tix->buffer.lines[next_pos.line_idx].size == 0);
+					if (word_to_nonspace || space_to_any) {
+						++boundary_count;
+					}
+
+					if (boundary_count > 1 || any_to_emptyline) {
+						break;
+					}
+
+					if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
+						tix->caret.pos = next_pos;
+					}
+				}
+			}
+		}
+
 		if (tix_input.keys[KEY_CODE_UG].ended_down) {
 			tix->caret.pos.line_idx = tix->buffer.lines_count > 0 ? tix->buffer.lines_count - 1 : 0;
 			was_caret_line_changed = 1U;
@@ -775,9 +871,9 @@ static unsigned long WINAPI render_run(void *param)
 			tix->caret.wanted_col_idx = tix->caret.pos.col_idx;
 		}
 
-		size_t caret_line_newline_col_idx = line_newline_col_idx(tix, &tix->file, tix->caret.pos.line_idx);
+		size_t caret_line_size = tix->buffer.lines[tix->caret.pos.line_idx].size;
 		if (tix_input.keys[KEY_CODE_L].ended_down) {
-			if (tix->caret.pos.col_idx + 1 < caret_line_newline_col_idx) {
+			if (tix->caret.pos.col_idx + 1 < caret_line_size) {
 				++tix->caret.pos.col_idx;
 			}
 			tix->caret.wanted_col_idx = tix->caret.pos.col_idx;
@@ -786,8 +882,8 @@ static unsigned long WINAPI render_run(void *param)
 		if (tix_input.keys[KEY_CODE_LOWBAR].ended_down) {
 			size_t char_col_idx = 0;
 			char *file_chars = (char *)tix->file.buf;
-			while (char_col_idx < caret_line_newline_col_idx) {
-				size_t offset = tix->buffer.lines[tix->caret.pos.line_idx].start_idx + char_col_idx;
+			while (char_col_idx < caret_line_size) {
+				size_t offset = tix->buffer.lines[tix->caret.pos.line_idx].file_offset + char_col_idx;
 				ASSERT(offset < tix->file.size);
 				char file_char = file_chars[offset];
 				if (file_char > RUNE_DIRECT_MIN && file_char <= RUNE_DIRECT_MAX) {
@@ -802,12 +898,54 @@ static unsigned long WINAPI render_run(void *param)
 		}
 
 		if (tix_input.keys[KEY_CODE_DOLLAR].ended_down) {
-			if (caret_line_newline_col_idx) {
-				tix->caret.pos.col_idx = caret_line_newline_col_idx - 1;
+			if (caret_line_size) {
+				tix->caret.pos.col_idx = caret_line_size - 1;
 			} else {
-				tix->caret.pos.col_idx = caret_line_newline_col_idx;
+				tix->caret.pos.col_idx = caret_line_size;
 			}
 			tix->caret.wanted_col_idx = CARET_WANTED_COL_IDX_END;
+		}
+
+		if (tix_input.keys[KEY_CODE_B].ended_down) {
+			TxtPt current_pos = {};
+			TxtPt prev_pos = tix->caret.pos;
+			uint32_t boundary_count = 0;
+
+			for (;;) {
+				current_pos = prev_pos;
+				prev_pos = txt_pt_prev(tix, current_pos);
+
+				if (txt_pt_are_equal(&current_pos, &prev_pos)) {
+					break;
+				}
+
+				Rune current_rune = buffer_get_rune(tix, &tix->file, current_pos);
+				Rune prev_rune = buffer_get_rune(tix, &tix->file, prev_pos);
+
+				RuneFlags current_rune_flags = rune_get_flags(tix, &current_pos, current_rune);
+				RuneFlags prev_rune_flags = rune_get_flags(tix, &prev_pos, prev_rune);
+
+				uint32_t word_to_nonspace = rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
+				                                rune_get_flag(prev_rune_flags, RUNE_FLAG_WORD) &&
+				                            !rune_get_flag(prev_rune_flags, RUNE_FLAG_SP);
+				uint32_t space_to_any = rune_get_flag(current_rune_flags, RUNE_FLAG_SP) !=
+				                        rune_get_flag(prev_rune_flags, RUNE_FLAG_SP);
+				uint32_t any_to_emptyline = prev_pos.col_idx == 0 &&
+				                            (prev_rune.value == '\n' || prev_rune.value == '\r' ||
+				                             tix->buffer.lines[prev_pos.line_idx].size == 0);
+
+				if (word_to_nonspace || space_to_any) {
+					++boundary_count;
+				}
+
+				if (boundary_count > 1 || any_to_emptyline) {
+					break;
+				}
+
+				if (rune_get_flag(prev_rune_flags, RUNE_FLAG_CARETABLE)) {
+					tix->caret.pos = prev_pos;
+				}
+			}
 		}
 
 		if (tix_input.keys[KEY_CODE_W].ended_down) {
@@ -815,7 +953,7 @@ static unsigned long WINAPI render_run(void *param)
 			TxtPt next_pos = tix->caret.pos;
 			for (;;) {
 				current_pos = next_pos;
-				next_pos = buffer_get_next_txt_pt(tix, &tix->file, current_pos);
+				next_pos = txt_pt_next(tix, current_pos);
 
 				if (txt_pt_are_equal(&current_pos, &next_pos)) {
 					break;
@@ -824,18 +962,22 @@ static unsigned long WINAPI render_run(void *param)
 				Rune current_rune = buffer_get_rune(tix, &tix->file, current_pos);
 				Rune next_rune = buffer_get_rune(tix, &tix->file, next_pos);
 
-				RuneFlags current_rune_flags = rune_get_flags(tix, &tix->file, &current_pos, current_rune);
-				RuneFlags next_rune_flags = rune_get_flags(tix, &tix->file, &next_pos, next_rune);
+				RuneFlags current_rune_flags = rune_get_flags(tix, &current_pos, current_rune);
+				RuneFlags next_rune_flags = rune_get_flags(tix, &next_pos, next_rune);
 
 				if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
 					tix->caret.pos = next_pos;
 				}
 
-				if (((rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
-				          rune_get_flag(next_rune_flags, RUNE_FLAG_WORD) ||
-				      rune_get_flag(current_rune_flags, RUNE_FLAG_SP) != rune_get_flag(next_rune_flags, RUNE_FLAG_SP)) &&
-				     !rune_get_flag(next_rune_flags, RUNE_FLAG_SP)) ||
-				    line_newline_col_idx(tix, &tix->file, next_pos.line_idx) == 0) {
+				uint32_t word_to_nonspace = rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
+				                                rune_get_flag(next_rune_flags, RUNE_FLAG_WORD) &&
+				                            !rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
+				uint32_t space_to_any = rune_get_flag(current_rune_flags, RUNE_FLAG_SP) &&
+				                        !rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
+				uint32_t any_to_emptyline = next_pos.col_idx == 0 &&
+				                            (next_rune.value == '\n' || next_rune.value == '\r' ||
+				                             tix->buffer.lines[next_pos.line_idx].size == 0);
+				if (word_to_nonspace || space_to_any || any_to_emptyline) {
 					break;
 				}
 			}
@@ -856,8 +998,8 @@ static unsigned long WINAPI render_run(void *param)
 				}
 			}
 
-			if (tix->caret.wanted_col_idx > caret_line_newline_col_idx) {
-				tix->caret.pos.col_idx = caret_line_newline_col_idx > 0 ? caret_line_newline_col_idx - 1 : 0;
+			if (tix->caret.wanted_col_idx > caret_line_size) {
+				tix->caret.pos.col_idx = caret_line_size > 0 ? caret_line_size - 1 : 0;
 			} else {
 				tix->caret.pos.col_idx = tix->caret.wanted_col_idx;
 			}
@@ -879,7 +1021,7 @@ static unsigned long WINAPI render_run(void *param)
 		       tix->caret.pos.line_idx < tix->buffer.lines_count);
 
 		ASSERT(tix->scroll_idx >= 0);
-		ASSERT(tix->scroll_idx < tix->buffer.lines_count);
+		ASSERT(tix->buffer.lines_count == 0 || tix->scroll_idx < tix->buffer.lines_count);
 
 		// bitmap_draw_rectangle(&tix->backbuf.buf, tix->backbuf.width_px, tix->backbuf.height_px, 0.0F, 0.0F,
 		//                       (float)tix->backbuf.width_px, (float)tix->backbuf.height_px, BG_COLOR);
@@ -887,9 +1029,9 @@ static unsigned long WINAPI render_run(void *param)
 		uint32_t fg_color = FG_COLOR;
 		for (unsigned tile_idx_y = 0; tix->grid.tile_height_px * tile_idx_y < tix->backbuf.height_px; ++tile_idx_y) {
 			size_t line_idx = tix->scroll_idx + tile_idx_y;
-			size_t newline_col_idx = 0;
+			size_t line_size = 0;
 			if (line_idx < tix->buffer.lines_count) {
-				newline_col_idx = line_newline_col_idx(tix, &tix->file, line_idx);
+				line_size = tix->buffer.lines[line_idx].size;
 			}
 			unsigned tile_min_y_px = tix->grid.tile_height_px * tile_idx_y;
 			AtlasIdx atlas_idx = {};
@@ -909,9 +1051,9 @@ static unsigned long WINAPI render_run(void *param)
 				char tile_char = ' ';
 				uint32_t tile_min_x_px = tile_idx_x * tix->grid.tile_width_px;
 
-				if (tile_idx_x < newline_col_idx) {
+				if (tile_idx_x < line_size) {
 					char *file_chars = (char *)tix->file.buf;
-					size_t offset = tix->buffer.lines[line_idx].start_idx + tile_idx_x;
+					size_t offset = tix->buffer.lines[line_idx].file_offset + tile_idx_x;
 					ASSERT(offset < tix->file.size);
 					char file_char = file_chars[offset];
 

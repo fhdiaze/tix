@@ -38,7 +38,6 @@ typedef enum RuneFlag : uint32_t {
 	RUNE_FLAG_UL = (1U << 6U),
 	RUNE_FLAG_LL = (1U << 7U),
 	RUNE_FLAG_CARETABLE = (1U << 8U),
-	RUNE_FLAG_END = (1U << 9U),
 } RuneFlag;
 
 typedef enum KeyCode : uint8_t {
@@ -163,10 +162,13 @@ typedef enum CaretMode : uint8_t {
 	CARET_MODE_VIEW,
 	CARET_MODE_INSERT,
 	CARET_MODE_BLOCK,
+	CARET_MODE_ACTIVE,
 } CaretMode;
 
 typedef enum Command : uint8_t {
 	COMMAND_W,
+	COMMAND_B,
+	COMMAND_GE,
 } Command;
 
 typedef struct KeyState {
@@ -208,8 +210,8 @@ typedef struct Tile {
 } Tile;
 
 typedef struct Line {
-	size_t start_idx;
-	size_t newline_idx;
+	size_t file_offset;
+	size_t size;
 	uint8_t contains_complex_chars;
 } Line;
 
@@ -348,40 +350,75 @@ inline static uint32_t txt_pt_are_equal(const TxtPt *const one, const TxtPt *con
 	return result;
 }
 
-inline static size_t line_newline_col_idx(Tix *tix, ReadFileResult *file, size_t line_idx)
+inline static TxtPt txt_pt_prev(Tix *tix, TxtPt pos)
 {
-	size_t result = tix->buffer.lines[line_idx].newline_idx - tix->buffer.lines[line_idx].start_idx;
+	TxtPt prev_pos = pos;
 
-	if (result > 0 && *((unsigned char *)file->buf + tix->buffer.lines[line_idx].newline_idx - 1) == '\r') {
-		--result;
+	if (prev_pos.col_idx > 0) {
+		--prev_pos.col_idx;
+	} else if (prev_pos.line_idx > 0) {
+		--prev_pos.line_idx;
+		ASSERT(tix->buffer.lines[prev_pos.line_idx].size > 0);
+		prev_pos.col_idx = tix->buffer.lines[prev_pos.line_idx].size - 1;
 	}
 
-	return result;
+	return prev_pos;
 }
 
-static RuneFlags rune_get_flags(Tix *tix, ReadFileResult *file, TxtPt *pos, Rune rune)
+inline static TxtPt txt_pt_next(Tix *tix, TxtPt pos)
+{
+	TxtPt next_pos = pos;
+
+	if (pos.line_idx < tix->buffer.lines_count) {
+		if (pos.col_idx + 1 < tix->buffer.lines[pos.line_idx].size) {
+			++next_pos.col_idx;
+		} else if (pos.line_idx + 1 < tix->buffer.lines_count) {
+			++next_pos.line_idx;
+			next_pos.col_idx = 0;
+		}
+	}
+
+	return next_pos;
+}
+
+// inline static uint32_t line_is_empty(Tix *tix, size_t line_idx)
+// {
+// 	ASSERT(line_idx < tix->buffer.lines_count);
+// 	uint32_t is_empty = tix->buffer.lines[line_idx].size == 0 || tix->buffer.lines[line_idx].size == 1 ;
+
+// 	return is_empty;
+// }
+
+static RuneFlags rune_get_flags(Tix *tix, TxtPt *pos, Rune rune)
 {
 	RuneFlags rune_flags = {};
 
-	if (rune.value == '\n' || rune.value == '\r') {
-		if (line_newline_col_idx(tix, file, pos->line_idx) == 0 && pos->col_idx == 0) {
+	if (rune.value == '\n') {
+		rune_flags.flags |= RUNE_FLAG_SP;
+		if (tix->buffer.lines[pos->line_idx].size == 1 && pos->col_idx == 0) {
 			rune_flags.flags |= RUNE_FLAG_CARETABLE;
 		}
-	} else {
-		rune_flags.flags |= RUNE_FLAG_CARETABLE;
-	}
-
-	if (rune.value == ' ' || rune.value == '\n' || rune.value == '\r' || rune.value == '\t') {
+	} else if (rune.value == '\r') {
 		rune_flags.flags |= RUNE_FLAG_SP;
+		if (tix->buffer.lines[pos->line_idx].size == 2 && pos->col_idx == 0) {
+			// NOTE(fredy): assuming the last byet is '\n'
+			rune_flags.flags |= RUNE_FLAG_CARETABLE;
+		}
+	} else if (rune.value == ' ' || rune.value == '\t') {
+		rune_flags.flags |= RUNE_FLAG_SP;
+		rune_flags.flags |= RUNE_FLAG_CARETABLE;
 	} else if ('0' <= rune.value && rune.value <= '9') {
 		rune_flags.flags |= RUNE_FLAG_DIGIT;
 		rune_flags.flags |= RUNE_FLAG_WORD;
+		rune_flags.flags |= RUNE_FLAG_CARETABLE;
 	} else if ('A' <= rune.value && rune.value <= 'Z') {
 		rune_flags.flags |= RUNE_FLAG_UL;
 		rune_flags.flags |= RUNE_FLAG_WORD;
+		rune_flags.flags |= RUNE_FLAG_CARETABLE;
 	} else if ('a' <= rune.value && rune.value <= 'z') {
 		rune_flags.flags |= RUNE_FLAG_LL;
 		rune_flags.flags |= RUNE_FLAG_WORD;
+		rune_flags.flags |= RUNE_FLAG_CARETABLE;
 	} else if (rune.value == '.' || rune.value == '_') {
 		rune_flags.flags |= RUNE_FLAG_PUNCT;
 		rune_flags.flags |= RUNE_FLAG_CARETABLE;
@@ -399,28 +436,14 @@ inline static RuneFlag rune_get_flag(RuneFlags flags, RuneFlag flag)
 
 inline static Rune buffer_get_rune(Tix *tix, ReadFileResult *file, TxtPt pos)
 {
-	size_t offset = tix->buffer.lines[pos.line_idx].start_idx + pos.col_idx;
-	ASSERT(offset < file->size);
-	char *file_chars = (char *)file->buf;
-	Rune rune = { .value = (unsigned char)file_chars[offset] };
+	Rune rune = {};
 
-	return rune;
-}
-
-inline static TxtPt buffer_get_next_txt_pt(Tix *tix, ReadFileResult *file, TxtPt pos)
-{
-	TxtPt next_pos = pos;
-
-	if (pos.line_idx < tix->buffer.lines_count) {
-		size_t newline_col_idx = line_newline_col_idx(tix, file, pos.line_idx);
-
-		if (pos.col_idx < newline_col_idx) {
-			++next_pos.col_idx;
-		} else if (pos.line_idx + 1 < tix->buffer.lines_count) {
-			++next_pos.line_idx;
-			next_pos.col_idx = 0;
-		}
+	if (tix->buffer.lines[pos.line_idx].size > 0) {
+		ASSERT(pos.col_idx < tix->buffer.lines[pos.line_idx].size);
+		size_t offset = tix->buffer.lines[pos.line_idx].file_offset + pos.col_idx;
+		ASSERT(offset < file->size);
+		rune.value = ((unsigned char *)file->buf)[offset];
 	}
 
-	return next_pos;
+	return rune;
 }
