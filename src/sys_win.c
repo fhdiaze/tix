@@ -844,7 +844,6 @@ static unsigned long WINAPI render_run(void *param)
 				tix->stack_key_count = 0U;
 				TxtPos src_pos = {};
 				TxtPos dst_pos = tix->caret.pos;
-				uint32_t was_word_started = FALSE;
 
 				for (;;) {
 					src_pos = dst_pos;
@@ -860,20 +859,16 @@ static unsigned long WINAPI render_run(void *param)
 					RuneTransitionFlags transition_flags =
 						rune_transition_get_flags(tix, src_rune, &src_pos, dst_rune, &dst_pos);
 
-					if (!was_word_started &&
-					    (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_SP_TO_NONSP) ||
-					     rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE))) {
-						was_word_started = TRUE;
-					} else if (was_word_started &&
-					           (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONSP_TO_SP) ||
-					            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_WORD_TO_PUNCT) ||
-					            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_PUNCT_TO_WORD))) {
-						break;
-					}
-
 					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE) ||
 					    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE)) {
 						tix->caret.pos = dst_pos;
+					}
+
+					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_SP_TO_NONSP) ||
+					    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE) ||
+					    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_WORD_TO_PUNCT) ||
+					    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_PUNCT_TO_WORD)) {
+						break;
 					}
 				}
 			} else {
