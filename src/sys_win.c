@@ -510,7 +510,7 @@ static unsigned long WINAPI render_run(void *param)
 		arena_rewind(&init_mark);
 	}
 
-	const char *file_path = "./ends_with_newline.txt";
+	const char *file_path = "./test.txt";
 
 	FILETIME file_previous_write_time = {};
 	LARGE_INTEGER performance_frequency;
@@ -705,8 +705,10 @@ static unsigned long WINAPI render_run(void *param)
 					file_offset += 32;
 				}
 
-				if (((char *)(tix->file.buf))[file_offset] == '\n' || file_offset + 1 == tix->file.size) {
-					ASSERT(file_offset < tix->file.size);
+				ASSERT(file_offset < tix->file.size);
+				uint32_t is_newline = ((char *)(tix->file.buf))[file_offset] == '\n';
+				uint32_t is_last_byte = file_offset + 1 == tix->file.size;
+				if (is_newline || is_last_byte) {
 					ASSERT(tix->buffer.lines_count < LINES_COUNT_MAX);
 
 					tix->buffer.lines[tix->buffer.lines_count].file_offset = line_offset;
@@ -716,7 +718,7 @@ static unsigned long WINAPI render_run(void *param)
 
 					++tix->buffer.lines_count;
 
-					if (((char *)(tix->file.buf))[file_offset] == '\n' && file_offset + 1 == tix->file.size) {
+					if (is_newline && is_last_byte) {
 						tix->buffer.lines[tix->buffer.lines_count].file_offset = line_offset;
 						tix->buffer.lines[tix->buffer.lines_count].size = 0;
 						++tix->buffer.lines_count;
@@ -737,30 +739,30 @@ static unsigned long WINAPI render_run(void *param)
 		uint32_t was_caret_line_changed = FALSE;
 		if (tix_input.keys[KEY_CODE_K].ended_down && tix->caret.pos.line_idx > 0) {
 			--tix->caret.pos.line_idx;
-			was_caret_line_changed = 1U;
+			was_caret_line_changed = TRUE;
 		}
 
 		if (tix_input.keys[KEY_CODE_J].ended_down && tix->caret.pos.line_idx + 1 < tix->buffer.lines_count) {
 			++tix->caret.pos.line_idx;
-			was_caret_line_changed = 1U;
+			was_caret_line_changed = TRUE;
 		}
 
 		if (tix_input.keys[KEY_CODE_U].ended_down && tix_input.keys[KEY_CODE_CTRL].ended_down) {
 			tix->caret.pos.line_idx -= min(tix->caret.pos.line_idx, 10);
-			was_caret_line_changed = 1U;
+			was_caret_line_changed = TRUE;
 		}
 
 		if (tix_input.keys[KEY_CODE_D].ended_down && tix_input.keys[KEY_CODE_CTRL].ended_down) {
 			size_t delta = tix->buffer.lines_count - tix->caret.pos.line_idx;
 			tix->caret.pos.line_idx += delta > 1 ? min(delta - 1, 10) : 0;
-			was_caret_line_changed = 1U;
+			was_caret_line_changed = TRUE;
 		}
 
 		if (tix_input.keys[KEY_CODE_G].ended_down) {
 			if (tix_input.keys[KEY_CODE_G].half_transition_count > 1 ||
 			    (tix->stack_key_count == 1 && tix->stack_key_codes[0] == KEY_CODE_G)) {
 				tix->caret.pos.line_idx = 0U;
-				was_caret_line_changed = 1U;
+				was_caret_line_changed = TRUE;
 				tix->stack_key_count = 0U;
 			} else {
 				tix->stack_key_codes[0] = KEY_CODE_G;
@@ -768,92 +770,145 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		}
 
+		if (tix_input.keys[KEY_CODE_B].ended_down) {
+			TxtPos src_pos = {};
+			TxtPos dst_pos = tix->caret.pos;
+			uint32_t was_word_started = FALSE;
+
+			for (;;) {
+				src_pos = dst_pos;
+				dst_pos = txt_pos_prev(tix, src_pos);
+
+				if (txt_pos_are_equal(&src_pos, &dst_pos)) {
+					break;
+				}
+
+				Rune src_rune = buffer_get_rune(tix, &tix->file, src_pos);
+				Rune dst_rune = buffer_get_rune(tix, &tix->file, dst_pos);
+
+				RuneTransitionFlags transition_flags =
+					rune_transition_get_flags(tix, src_rune, &src_pos, dst_rune, &dst_pos);
+
+				if (!was_word_started &&
+				    (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_NONSP) ||
+				     rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE))) {
+					was_word_started = TRUE;
+				} else if (was_word_started &&
+				           (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONSP_TO_SP) ||
+				            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE) ||
+				            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_WORD_TO_PUNCT) ||
+				            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_PUNCT_TO_WORD))) {
+					break;
+				}
+
+				if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE) ||
+				    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE)) {
+					tix->caret.pos = dst_pos;
+				}
+			}
+		}
+
+		if (tix_input.keys[KEY_CODE_W].ended_down) {
+			TxtPos src_pos = {};
+			TxtPos dst_pos = tix->caret.pos;
+			for (;;) {
+				src_pos = dst_pos;
+				dst_pos = txt_pos_next(tix, src_pos);
+
+				if (txt_pos_are_equal(&src_pos, &dst_pos)) {
+					break;
+				}
+
+				Rune src_rune = buffer_get_rune(tix, &tix->file, src_pos);
+				Rune dst_rune = buffer_get_rune(tix, &tix->file, dst_pos);
+
+				RuneTransitionFlags transition_flags =
+					rune_transition_get_flags(tix, src_rune, &src_pos, dst_rune, &dst_pos);
+
+				if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE) ||
+				    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE)) {
+					tix->caret.pos = dst_pos;
+				}
+
+				if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_SP_TO_NONSP) ||
+				    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE) ||
+				    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_WORD_TO_PUNCT) ||
+				    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_PUNCT_TO_WORD)) {
+					break;
+				}
+			}
+		}
+
 		if (tix_input.keys[KEY_CODE_E].ended_down) {
 			if (tix->stack_key_count == 1 && tix->stack_key_codes[0] == KEY_CODE_G) {
-				TxtPt current_pos = {};
-				TxtPt next_pos = tix->caret.pos;
-				uint32_t boundary_count = 0;
+				tix->stack_key_count = 0U;
+				TxtPos src_pos = {};
+				TxtPos dst_pos = tix->caret.pos;
+				uint32_t was_word_started = FALSE;
 
 				for (;;) {
-					current_pos = next_pos;
-					next_pos = txt_pt_prev(tix, current_pos);
+					src_pos = dst_pos;
+					dst_pos = txt_pos_prev(tix, src_pos);
 
-					if (txt_pt_are_equal(&current_pos, &next_pos)) {
+					if (txt_pos_are_equal(&src_pos, &dst_pos)) {
 						break;
 					}
 
-					Rune current_rune = buffer_get_rune(tix, &tix->file, current_pos);
-					Rune next_rune = buffer_get_rune(tix, &tix->file, next_pos);
+					Rune src_rune = buffer_get_rune(tix, &tix->file, src_pos);
+					Rune dst_rune = buffer_get_rune(tix, &tix->file, dst_pos);
 
-					RuneFlags current_rune_flags = rune_get_flags(tix, &current_pos, current_rune);
-					RuneFlags next_rune_flags = rune_get_flags(tix, &next_pos, next_rune);
+					RuneTransitionFlags transition_flags =
+						rune_transition_get_flags(tix, src_rune, &src_pos, dst_rune, &dst_pos);
 
-					if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
-						tix->caret.pos = next_pos;
-					}
-
-					uint32_t word_to_nonspace = rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
-					                                rune_get_flag(next_rune_flags, RUNE_FLAG_WORD) &&
-					                            !rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
-					uint32_t space_to_any = rune_get_flag(current_rune_flags, RUNE_FLAG_SP) !=
-					                        rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
-					uint32_t any_to_emptyline = next_pos.col_idx == 0 &&
-					                            (next_rune.value == '\n' || next_rune.value == '\r' ||
-					                             tix->buffer.lines[next_pos.line_idx].size == 0);
-
-					if (word_to_nonspace || space_to_any) {
-						++boundary_count;
-					}
-
-					if (boundary_count > 1 || any_to_emptyline) {
+					if (!was_word_started &&
+					    (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_SP_TO_NONSP) ||
+					     rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE))) {
+						was_word_started = TRUE;
+					} else if (was_word_started &&
+					           (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONSP_TO_SP) ||
+					            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_WORD_TO_PUNCT) ||
+					            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_PUNCT_TO_WORD))) {
 						break;
 					}
 
-					if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
-						tix->caret.pos = next_pos;
+					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE) ||
+					    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE)) {
+						tix->caret.pos = dst_pos;
 					}
 				}
 			} else {
-				TxtPt current_pos = {};
-				TxtPt next_pos = tix->caret.pos;
-				uint32_t boundary_count = 0;
+				TxtPos src_pos = {};
+				TxtPos dst_pos = tix->caret.pos;
+				uint32_t was_word_started = FALSE;
 
 				for (;;) {
-					current_pos = next_pos;
-					next_pos = txt_pt_next(tix, current_pos);
+					src_pos = dst_pos;
+					dst_pos = txt_pos_next(tix, src_pos);
 
-					if (txt_pt_are_equal(&current_pos, &next_pos)) {
+					if (txt_pos_are_equal(&src_pos, &dst_pos)) {
 						break;
 					}
 
-					Rune current_rune = buffer_get_rune(tix, &tix->file, current_pos);
-					Rune next_rune = buffer_get_rune(tix, &tix->file, next_pos);
+					Rune src_rune = buffer_get_rune(tix, &tix->file, src_pos);
+					Rune dst_rune = buffer_get_rune(tix, &tix->file, dst_pos);
 
-					RuneFlags current_rune_flags = rune_get_flags(tix, &current_pos, current_rune);
-					RuneFlags next_rune_flags = rune_get_flags(tix, &next_pos, next_rune);
+					RuneTransitionFlags transition_flags =
+						rune_transition_get_flags(tix, src_rune, &src_pos, dst_rune, &dst_pos);
 
-					if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
-						tix->caret.pos = next_pos;
-					}
-
-					uint32_t word_to_nonspace = rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
-					                                rune_get_flag(next_rune_flags, RUNE_FLAG_WORD) &&
-					                            !rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
-					uint32_t space_to_any = rune_get_flag(current_rune_flags, RUNE_FLAG_SP) !=
-					                        rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
-					uint32_t any_to_emptyline = next_pos.col_idx == 0 &&
-					                            (next_rune.value == '\n' || next_rune.value == '\r' ||
-					                             tix->buffer.lines[next_pos.line_idx].size == 0);
-					if (word_to_nonspace || space_to_any) {
-						++boundary_count;
-					}
-
-					if (boundary_count > 1 || any_to_emptyline) {
+					if (!was_word_started &&
+					    (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_NONSP) ||
+					     rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE))) {
+						was_word_started = TRUE;
+					} else if (was_word_started &&
+					           (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONSP_TO_SP) ||
+					            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_WORD_TO_PUNCT) ||
+					            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_PUNCT_TO_WORD))) {
 						break;
 					}
 
-					if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
-						tix->caret.pos = next_pos;
+					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE) ||
+					    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE)) {
+						tix->caret.pos = dst_pos;
 					}
 				}
 			}
@@ -861,7 +916,7 @@ static unsigned long WINAPI render_run(void *param)
 
 		if (tix_input.keys[KEY_CODE_UG].ended_down) {
 			tix->caret.pos.line_idx = tix->buffer.lines_count > 0 ? tix->buffer.lines_count - 1 : 0;
-			was_caret_line_changed = 1U;
+			was_caret_line_changed = TRUE;
 		}
 
 		if (tix_input.keys[KEY_CODE_H].ended_down) {
@@ -904,83 +959,6 @@ static unsigned long WINAPI render_run(void *param)
 				tix->caret.pos.col_idx = caret_line_size;
 			}
 			tix->caret.wanted_col_idx = CARET_WANTED_COL_IDX_END;
-		}
-
-		if (tix_input.keys[KEY_CODE_B].ended_down) {
-			TxtPt current_pos = {};
-			TxtPt prev_pos = tix->caret.pos;
-			uint32_t boundary_count = 0;
-
-			for (;;) {
-				current_pos = prev_pos;
-				prev_pos = txt_pt_prev(tix, current_pos);
-
-				if (txt_pt_are_equal(&current_pos, &prev_pos)) {
-					break;
-				}
-
-				Rune current_rune = buffer_get_rune(tix, &tix->file, current_pos);
-				Rune prev_rune = buffer_get_rune(tix, &tix->file, prev_pos);
-
-				RuneFlags current_rune_flags = rune_get_flags(tix, &current_pos, current_rune);
-				RuneFlags prev_rune_flags = rune_get_flags(tix, &prev_pos, prev_rune);
-
-				uint32_t word_to_nonspace = rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
-				                                rune_get_flag(prev_rune_flags, RUNE_FLAG_WORD) &&
-				                            !rune_get_flag(prev_rune_flags, RUNE_FLAG_SP);
-				uint32_t space_to_any = rune_get_flag(current_rune_flags, RUNE_FLAG_SP) !=
-				                        rune_get_flag(prev_rune_flags, RUNE_FLAG_SP);
-				uint32_t any_to_emptyline = prev_pos.col_idx == 0 &&
-				                            (prev_rune.value == '\n' || prev_rune.value == '\r' ||
-				                             tix->buffer.lines[prev_pos.line_idx].size == 0);
-
-				if (word_to_nonspace || space_to_any) {
-					++boundary_count;
-				}
-
-				if (boundary_count > 1 || any_to_emptyline) {
-					break;
-				}
-
-				if (rune_get_flag(prev_rune_flags, RUNE_FLAG_CARETABLE)) {
-					tix->caret.pos = prev_pos;
-				}
-			}
-		}
-
-		if (tix_input.keys[KEY_CODE_W].ended_down) {
-			TxtPt current_pos = {};
-			TxtPt next_pos = tix->caret.pos;
-			for (;;) {
-				current_pos = next_pos;
-				next_pos = txt_pt_next(tix, current_pos);
-
-				if (txt_pt_are_equal(&current_pos, &next_pos)) {
-					break;
-				}
-
-				Rune current_rune = buffer_get_rune(tix, &tix->file, current_pos);
-				Rune next_rune = buffer_get_rune(tix, &tix->file, next_pos);
-
-				RuneFlags current_rune_flags = rune_get_flags(tix, &current_pos, current_rune);
-				RuneFlags next_rune_flags = rune_get_flags(tix, &next_pos, next_rune);
-
-				if (rune_get_flag(next_rune_flags, RUNE_FLAG_CARETABLE)) {
-					tix->caret.pos = next_pos;
-				}
-
-				uint32_t word_to_nonspace = rune_get_flag(current_rune_flags, RUNE_FLAG_WORD) !=
-				                                rune_get_flag(next_rune_flags, RUNE_FLAG_WORD) &&
-				                            !rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
-				uint32_t space_to_any = rune_get_flag(current_rune_flags, RUNE_FLAG_SP) &&
-				                        !rune_get_flag(next_rune_flags, RUNE_FLAG_SP);
-				uint32_t any_to_emptyline = next_pos.col_idx == 0 &&
-				                            (next_rune.value == '\n' || next_rune.value == '\r' ||
-				                             tix->buffer.lines[next_pos.line_idx].size == 0);
-				if (word_to_nonspace || space_to_any || any_to_emptyline) {
-					break;
-				}
-			}
 		}
 
 		if (tix_input.keys[KEY_CODE_ZERO].ended_down) {
