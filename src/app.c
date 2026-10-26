@@ -269,18 +269,19 @@ typedef struct Atlas {
 	unsigned char buf[ATLAS_BUF_SIZE_MAX];
 } Atlas;
 
-typedef struct Backbuf {
+typedef struct FrameBuf {
 	size_t buf_size;
 	unsigned char buf[BACKBUF_SIZE_MAX];
 	uint32_t pitch_size;
 	uint32_t width_px;
 	uint32_t height_px;
-} Backbuf;
+} FrameBuf;
 
-typedef struct Buffer {
+typedef struct TxtBuf {
 	Line lines[LINES_COUNT_MAX];
 	size_t lines_count;
-} Buffer;
+	FileBuf filebuf;
+} TxtBuf;
 
 typedef struct TileGrid {
 	uint32_t tile_width_px;
@@ -300,9 +301,8 @@ typedef struct Tix {
 	Atlas atlas;
 	Caret caret;
 	size_t scroll_idx;
-	Backbuf backbuf;
-	Buffer buffer;
-	ReadFileResult file;
+	FrameBuf framebuf;
+	TxtBuf txtbuf;
 	TileGrid grid;
 	KeyState stack_key_states[KEY_STACK_COUNT_MAX];
 	uint16_t stack_key_count;
@@ -319,26 +319,26 @@ typedef struct Tix {
 // structure: tree, lines
 // primitives: chars, code_point, grapheme cluster, glyph, rune,
 
-static void buffer_split(Buffer *buffer)
+static void txtbuf_split(TxtBuf *txtbuf)
 {
 }
 
 void app_init(Storage *storage)
 {
-	buffer_split(nullptr);
+	txtbuf_split(nullptr);
 }
 
-static void tix_update_backbuf_dims(Tix *tix, uint32_t width_px, uint32_t height_px)
+static void tix_update_framebuf_dims(Tix *tix, uint32_t width_px, uint32_t height_px)
 {
 	ASSERT(width_px * height_px * PIXEL_SIZE <= BACKBUF_SIZE_MAX);
 
-	tix->backbuf.width_px = width_px;
-	tix->backbuf.height_px = height_px;
-	tix->backbuf.buf_size = (size_t)tix->backbuf.width_px * tix->backbuf.height_px * PIXEL_SIZE;
-	tix->backbuf.pitch_size = tix->backbuf.width_px * PIXEL_SIZE;
+	tix->framebuf.width_px = width_px;
+	tix->framebuf.height_px = height_px;
+	tix->framebuf.buf_size = (size_t)tix->framebuf.width_px * tix->framebuf.height_px * PIXEL_SIZE;
+	tix->framebuf.pitch_size = tix->framebuf.width_px * PIXEL_SIZE;
 
-	tix->grid.tile_count_x = tix->backbuf.width_px / tix->grid.tile_width_px;
-	tix->grid.tile_count_y = tix->backbuf.height_px / tix->grid.tile_height_px;
+	tix->grid.tile_count_x = tix->framebuf.width_px / tix->grid.tile_width_px;
+	tix->grid.tile_count_y = tix->framebuf.height_px / tix->grid.tile_height_px;
 }
 
 static void tix_update_tile_dims(Tix *tix, uint32_t width_px, uint32_t height_px, uint32_t ascent_px)
@@ -360,14 +360,14 @@ static void tix_update_tile_dims(Tix *tix, uint32_t width_px, uint32_t height_px
 	ASSERT(tix->atlas.buf_size <= (size_t)ATLAS_BUF_SIZE_MAX);
 }
 
-inline static uint32_t txt_pos_are_equal(const TxtPos *const one, const TxtPos *const other)
+inline static uint32_t txtpos_are_equal(const TxtPos *const one, const TxtPos *const other)
 {
 	uint32_t result = one->line_idx == other->line_idx && one->col_idx == other->col_idx;
 
 	return result;
 }
 
-inline static TxtPos txt_pos_prev(Tix *tix, TxtPos pos)
+inline static TxtPos txtbuf_prev_pos(TxtBuf *txtbuf, TxtPos pos)
 {
 	TxtPos prev_pos = pos;
 
@@ -375,50 +375,42 @@ inline static TxtPos txt_pos_prev(Tix *tix, TxtPos pos)
 		--prev_pos.col_idx;
 	} else if (prev_pos.line_idx > 0) {
 		--prev_pos.line_idx;
-		ASSERT(tix->buffer.lines[prev_pos.line_idx].size > 0);
-		prev_pos.col_idx = tix->buffer.lines[prev_pos.line_idx].size - 1;
+		ASSERT(txtbuf->lines[prev_pos.line_idx].size > 0);
+		prev_pos.col_idx = txtbuf->lines[prev_pos.line_idx].size - 1;
 	}
 
 	return prev_pos;
 }
 
-inline static TxtPos txt_pos_next(Tix *tix, TxtPos pos)
+inline static TxtPos txtbuf_next_pos(TxtBuf *txtbuf, TxtPos pos)
 {
-	TxtPos next_pos = pos;
+	TxtPos result = pos;
 
-	if (pos.line_idx < tix->buffer.lines_count) {
-		if (pos.col_idx + 1 < tix->buffer.lines[pos.line_idx].size) {
-			++next_pos.col_idx;
-		} else if (pos.line_idx + 1 < tix->buffer.lines_count) {
-			++next_pos.line_idx;
-			next_pos.col_idx = 0;
+	if (pos.line_idx < txtbuf->lines_count) {
+		if (pos.col_idx + 1 < txtbuf->lines[pos.line_idx].size) {
+			++result.col_idx;
+		} else if (pos.line_idx + 1 < txtbuf->lines_count) {
+			++result.line_idx;
+			result.col_idx = 0;
 		}
 	}
 
-	return next_pos;
+	return result;
 }
 
-// inline static uint32_t line_is_empty(Tix *tix, size_t line_idx)
-// {
-// 	ASSERT(line_idx < tix->buffer.lines_count);
-// 	uint32_t is_empty = tix->buffer.lines[line_idx].size == 0 || tix->buffer.lines[line_idx].size == 1 ;
-
-// 	return is_empty;
-// }
-
-static RuneFlags rune_get_flags(Tix *tix, TxtPos *pos, Rune rune)
+static RuneFlags txtbuf_get_rune_flags(TxtBuf *txtbuf, TxtPos *pos, Rune rune)
 {
 	RuneFlags rune_flags = {};
 
 	if (rune.value == '\n') {
 		rune_flags.bits |= RUNE_FLAG_SP;
-		if (tix->buffer.lines[pos->line_idx].size == 1 && pos->col_idx == 0) {
+		if (txtbuf->lines[pos->line_idx].size == 1 && pos->col_idx == 0) {
 			rune_flags.bits |= RUNE_FLAG_CARETABLE;
 		}
 	} else if (rune.value == '\r') {
 		rune_flags.bits |= RUNE_FLAG_SP;
-		if (tix->buffer.lines[pos->line_idx].size == 2 && pos->col_idx == 0) {
-			// NOTE(fredy): assuming the last byet is '\n'
+		if (txtbuf->lines[pos->line_idx].size == 2 && pos->col_idx == 0) {
+			// NOTE(fredy): assuming the last byte is '\n'
 			rune_flags.bits |= RUNE_FLAG_CARETABLE;
 		}
 	} else {
@@ -451,13 +443,13 @@ inline static RuneFlag rune_get_flag(RuneFlags flags, RuneFlag flag)
 	return result;
 }
 
-inline static RuneTransitionFlags rune_transition_get_flags(Tix *tix, Rune src_rune, TxtPos *src_pos, Rune dst_rune,
-                                                            TxtPos *dst_pos)
+inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(TxtBuf *txtbuf, Rune src_rune, TxtPos *src_pos,
+                                                                   Rune dst_rune, TxtPos *dst_pos)
 {
 	RuneTransitionFlags flags = {};
 
-	RuneFlags src_rune_flags = rune_get_flags(tix, src_pos, src_rune);
-	RuneFlags dst_rune_flags = rune_get_flags(tix, dst_pos, dst_rune);
+	RuneFlags src_rune_flags = txtbuf_get_rune_flags(txtbuf, src_pos, src_rune);
+	RuneFlags dst_rune_flags = txtbuf_get_rune_flags(txtbuf, dst_pos, dst_rune);
 
 	if (rune_get_flag(src_rune_flags, RUNE_FLAG_CARETABLE)) {
 		if (!rune_get_flag(dst_rune_flags, RUNE_FLAG_CARETABLE)) {
@@ -474,7 +466,7 @@ inline static RuneTransitionFlags rune_transition_get_flags(Tix *tix, Rune src_r
 	}
 
 	if (dst_pos->col_idx == 0 &&
-	    (dst_rune.value == '\n' || dst_rune.value == '\r' || tix->buffer.lines[dst_pos->line_idx].size == 0)) {
+	    (dst_rune.value == '\n' || dst_rune.value == '\r' || txtbuf->lines[dst_pos->line_idx].size == 0)) {
 		flags.bits |= RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE;
 	}
 
@@ -483,7 +475,7 @@ inline static RuneTransitionFlags rune_transition_get_flags(Tix *tix, Rune src_r
 	}
 
 	if (dst_pos->col_idx == 0 &&
-	    (dst_rune.value == '\n' || dst_rune.value == '\r' || tix->buffer.lines[dst_pos->line_idx].size == 0)) {
+	    (dst_rune.value == '\n' || dst_rune.value == '\r' || txtbuf->lines[dst_pos->line_idx].size == 0)) {
 		flags.bits |= RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE;
 	}
 
@@ -513,16 +505,39 @@ inline static RuneTransitionFlag rune_transition_get_flag(RuneTransitionFlags fl
 	return result;
 }
 
-inline static Rune buffer_get_rune(Tix *tix, ReadFileResult *file, TxtPos pos)
+inline static Rune txtbuf_get_rune(TxtBuf *txtbuf, TxtPos pos)
 {
 	Rune rune = {};
 
-	if (tix->buffer.lines[pos.line_idx].size > 0) {
-		ASSERT(pos.col_idx < tix->buffer.lines[pos.line_idx].size);
-		size_t offset = tix->buffer.lines[pos.line_idx].file_offset + pos.col_idx;
-		ASSERT(offset < file->size);
-		rune.value = ((unsigned char *)file->buf)[offset];
+	if (txtbuf->lines[pos.line_idx].size > 0) {
+		ASSERT(pos.col_idx < txtbuf->lines[pos.line_idx].size);
+		size_t offset = txtbuf->lines[pos.line_idx].file_offset + pos.col_idx;
+		ASSERT(offset < txtbuf->filebuf.size);
+		rune.value = ((unsigned char *)txtbuf->filebuf.buf)[offset];
 	}
 
 	return rune;
+}
+
+inline static TxtPos txtbuf_last_caretable_pos(TxtBuf *txtbuf, size_t line_idx)
+{
+	TxtPos result = { .line_idx = line_idx, .col_idx = 0 };
+	size_t line_size = txtbuf->lines[result.line_idx].size;
+	if (line_size > 0) {
+		result.col_idx = line_size - 1;
+
+		while (result.col_idx > 0) {
+			Rune dst_rune = txtbuf_get_rune(txtbuf, result);
+			RuneFlags flags = txtbuf_get_rune_flags(txtbuf, &result, dst_rune);
+			if (!rune_get_flag(flags, RUNE_FLAG_CARETABLE)) {
+				--result.col_idx;
+			} else {
+				break;
+			}
+		}
+	} else {
+		result.col_idx = 0U;
+	}
+
+	return result;
 }

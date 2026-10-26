@@ -3,17 +3,17 @@
 #ifndef SYS_H
 #define SYS_H
 
-typedef struct ReadFileResult {
+typedef struct FileBuf {
 	size_t size;
 	void *buf;
-} ReadFileResult;
+} FileBuf;
 
 /**
  * @brief Reads an entire file into memory.
  *
  * @param path The full path to the file.
- * @return ReadFileResult
+ * @return A buffer of the file
  */
-ReadFileResult sys_read_file(const char *path);
+FileBuf sys_read_file(const char *path);
 
 #endif // SYS_H
