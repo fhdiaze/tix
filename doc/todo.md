@@ -8,8 +8,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] style: check convention for enums
 - [x] vim: $ command
 - [x] vim: _ command
-- [ ] vim: w command
-- [ ] vim: b command
+- [x] vim: w command
+- [x] vim: b command
 - [ ] vim: f command
 - [ ] vim: F command
 - [ ] vim: dd command

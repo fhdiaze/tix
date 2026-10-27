@@ -791,11 +791,11 @@ static unsigned long WINAPI render_run(void *param)
 					txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos);
 
 				if (!was_word_started &&
-				    (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_NONSP) ||
+				    (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_NONBLANK) ||
 				     rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE))) {
 					was_word_started = TRUE;
 				} else if (was_word_started &&
-				           (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONSP_TO_SP) ||
+				           (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONBLANK_TO_BLANK) ||
 				            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE) ||
 				            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_WORD_TO_PUNCT) ||
 				            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_PUNCT_TO_WORD))) {
@@ -831,7 +831,7 @@ static unsigned long WINAPI render_run(void *param)
 					tix->caret.pos = dst_pos;
 				}
 
-				if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_SP_TO_NONSP) ||
+				if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_BLANK_TO_NONBLANK) ||
 				    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE) ||
 				    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_WORD_TO_PUNCT) ||
 				    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_PUNCT_TO_WORD)) {
@@ -865,7 +865,7 @@ static unsigned long WINAPI render_run(void *param)
 						tix->caret.pos = dst_pos;
 					}
 
-					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_SP_TO_NONSP) ||
+					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_BLANK_TO_NONBLANK) ||
 					    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE) ||
 					    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_WORD_TO_PUNCT) ||
 					    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_PUNCT_TO_WORD)) {
@@ -892,11 +892,11 @@ static unsigned long WINAPI render_run(void *param)
 						txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos);
 
 					if (!was_word_started &&
-					    (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_NONSP) ||
+					    (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_NONBLANK) ||
 					     rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE))) {
 						was_word_started = TRUE;
 					} else if (was_word_started &&
-					           (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONSP_TO_SP) ||
+					           (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONBLANK_TO_BLANK) ||
 					            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_WORD_TO_PUNCT) ||
 					            rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_PUNCT_TO_WORD))) {
 						break;
