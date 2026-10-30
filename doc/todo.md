@@ -36,9 +36,6 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [ ] `render_process_messages`: bound the `PeekMessage` loop
       (`TODO(fredy)` in `sys_win.c`).
 
-
-
-
 ## GPU backend
 
 - [ ] D3D11 device + flip-model swap chain (WARP fallback).

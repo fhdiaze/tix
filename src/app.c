@@ -28,6 +28,8 @@
 #define ATLAS_TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE)
 #define ATLAS_BUF_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE * RUNE_DIRECT_COUNT)
 
+typedef uint32_t RuneTransitionFlags;
+
 typedef enum RuneTransitionFlag : uint32_t {
 	RUNE_TRANSITION_FLAG_ANY_TO_NONBLANK = (1U << 0U),
 	RUNE_TRANSITION_FLAG_BLANK_TO_NONBLANK = (1U << 1U),
@@ -41,6 +43,14 @@ typedef enum RuneTransitionFlag : uint32_t {
 	RUNE_TRANSITION_FLAG_NONCARETABLE_TO_NONCARETABLE = (1U << 9U),
 } RuneTransitionFlag;
 
+typedef uint32_t CaretFlags;
+
+typedef enum CaretFlag : uint32_t {
+	CARET_FLAG_SELECTABLE = (1U << 0U),
+} CaretFlag;
+
+typedef uint32_t RuneFlags;
+
 typedef enum RuneFlag : uint32_t {
 	RUNE_FLAG_INVALID = (1U << 0U),
 	RUNE_FLAG_WORD = (1U << 1U),
@@ -52,6 +62,13 @@ typedef enum RuneFlag : uint32_t {
 	RUNE_FLAG_LOWER = (1U << 7U),
 	RUNE_FLAG_CARETABLE = (1U << 8U),
 } RuneFlag;
+
+typedef uint32_t TileFlags;
+
+typedef enum TileFlag : uint32_t {
+	TILE_FLAG_CARETABLE = (1U << 0U),
+	TILE_FLAG_SELECTED = (1U << 1U),
+} TileFlag;
 
 typedef enum KeyCode : uint8_t {
 	KEY_CODE_SP,
@@ -162,6 +179,17 @@ typedef enum KeyCode : uint8_t {
 	KEY_CODE_RETURN,
 	KEY_CODE_ESC,
 
+	KEY_CODE_HOME,
+	KEY_CODE_END,
+
+	KEY_CODE_ARROW_LEFT,
+	KEY_CODE_ARROW_RIGHT,
+	KEY_CODE_ARROW_DOWN,
+	KEY_CODE_ARROW_UP,
+
+	KEY_CODE_PAGE_DOWN,
+	KEY_CODE_PAGE_UP,
+
 	KEY_CODE_COUNT,
 } KeyCode;
 
@@ -216,14 +244,6 @@ typedef struct AtlasIdx {
 typedef struct Rune {
 	uint32_t value;
 } Rune;
-
-typedef struct RuneFlags {
-	uint32_t bits;
-} RuneFlags;
-
-typedef struct RuneTransitionFlags {
-	uint32_t bits;
-} RuneTransitionFlags;
 
 typedef struct Tile {
 	AtlasIdx glyph_idx;
@@ -283,6 +303,15 @@ typedef struct FrameBuf {
 	uint32_t width_px;
 	uint32_t height_px;
 } FrameBuf;
+
+typedef struct Piece {
+	size_t start;
+} Piece;
+
+typedef struct PieceTable {
+	Piece pieces[100];
+	size_t pieces_count;
+} PieceTable;
 
 typedef struct TxtBuf {
 	Line lines[LINES_COUNT_MAX];
@@ -410,34 +439,34 @@ static RuneFlags txtbuf_get_rune_flags(TxtBuf *txtbuf, TxtPos *pos, Rune rune)
 	RuneFlags rune_flags = {};
 
 	if (rune.value == '\n') {
-		rune_flags.bits |= RUNE_FLAG_BLANK;
+		rune_flags |= RUNE_FLAG_BLANK;
 		if (txtbuf->lines[pos->line_idx].size == 1 && pos->col_idx == 0) {
-			rune_flags.bits |= RUNE_FLAG_CARETABLE;
+			rune_flags |= RUNE_FLAG_CARETABLE;
 		}
 	} else if (rune.value == '\r') {
-		rune_flags.bits |= RUNE_FLAG_BLANK;
+		rune_flags |= RUNE_FLAG_BLANK;
 		if (txtbuf->lines[pos->line_idx].size == 2 && pos->col_idx == 0) {
 			// NOTE(fredy): assuming the last byte is '\n'
-			rune_flags.bits |= RUNE_FLAG_CARETABLE;
+			rune_flags |= RUNE_FLAG_CARETABLE;
 		}
 	} else {
-		rune_flags.bits |= RUNE_FLAG_CARETABLE;
+		rune_flags |= RUNE_FLAG_CARETABLE;
 	}
 
 	if (rune.value == ' ' || rune.value == '\t') {
-		rune_flags.bits |= RUNE_FLAG_BLANK;
+		rune_flags |= RUNE_FLAG_BLANK;
 	} else if ('0' <= rune.value && rune.value <= '9') {
-		rune_flags.bits |= RUNE_FLAG_DIGIT;
-		rune_flags.bits |= RUNE_FLAG_WORD;
+		rune_flags |= RUNE_FLAG_DIGIT;
+		rune_flags |= RUNE_FLAG_WORD;
 	} else if ('A' <= rune.value && rune.value <= 'Z') {
-		rune_flags.bits |= RUNE_FLAG_UPPER;
-		rune_flags.bits |= RUNE_FLAG_WORD;
+		rune_flags |= RUNE_FLAG_UPPER;
+		rune_flags |= RUNE_FLAG_WORD;
 	} else if ('a' <= rune.value && rune.value <= 'z') {
-		rune_flags.bits |= RUNE_FLAG_LOWER;
-		rune_flags.bits |= RUNE_FLAG_WORD;
+		rune_flags |= RUNE_FLAG_LOWER;
+		rune_flags |= RUNE_FLAG_WORD;
 	} else if ((rune.value >= '!' && rune.value <= '/') || (rune.value >= ':' && rune.value <= '@') ||
 	           (rune.value >= '[' && rune.value <= '`') || (rune.value >= '{' && rune.value <= '~')) {
-		rune_flags.bits |= RUNE_FLAG_PUNCT;
+		rune_flags |= RUNE_FLAG_PUNCT;
 	}
 
 	return rune_flags;
@@ -445,7 +474,7 @@ static RuneFlags txtbuf_get_rune_flags(TxtBuf *txtbuf, TxtPos *pos, Rune rune)
 
 inline static RuneFlag rune_get_flag(RuneFlags flags, RuneFlag flag)
 {
-	RuneFlag result = flags.bits & flag;
+	RuneFlag result = flags & flag;
 
 	return result;
 }
@@ -460,46 +489,46 @@ inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(TxtBuf *txtbu
 
 	if (rune_get_flag(src_rune_flags, RUNE_FLAG_CARETABLE)) {
 		if (!rune_get_flag(dst_rune_flags, RUNE_FLAG_CARETABLE)) {
-			flags.bits |= RUNE_TRANSITION_FLAG_CARETABLE_TO_NONCARETABLE;
+			flags |= RUNE_TRANSITION_FLAG_CARETABLE_TO_NONCARETABLE;
 		} else {
-			flags.bits |= RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE;
+			flags |= RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE;
 		}
 	} else {
 		if (rune_get_flag(dst_rune_flags, RUNE_FLAG_CARETABLE)) {
-			flags.bits |= RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE;
+			flags |= RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE;
 		} else {
-			flags.bits |= RUNE_TRANSITION_FLAG_NONCARETABLE_TO_NONCARETABLE;
+			flags |= RUNE_TRANSITION_FLAG_NONCARETABLE_TO_NONCARETABLE;
 		}
 	}
 
 	if (dst_pos->col_idx == 0 &&
 	    (dst_rune.value == '\n' || dst_rune.value == '\r' || txtbuf->lines[dst_pos->line_idx].size == 0)) {
-		flags.bits |= RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE;
+		flags |= RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE;
 	}
 
 	if (!rune_get_flag(dst_rune_flags, RUNE_FLAG_BLANK)) {
-		flags.bits |= RUNE_TRANSITION_FLAG_ANY_TO_NONBLANK;
+		flags |= RUNE_TRANSITION_FLAG_ANY_TO_NONBLANK;
 	}
 
 	if (dst_pos->col_idx == 0 &&
 	    (dst_rune.value == '\n' || dst_rune.value == '\r' || txtbuf->lines[dst_pos->line_idx].size == 0)) {
-		flags.bits |= RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE;
+		flags |= RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE;
 	}
 
 	if (!rune_get_flag(src_rune_flags, RUNE_FLAG_BLANK) && rune_get_flag(dst_rune_flags, RUNE_FLAG_BLANK)) {
-		flags.bits |= RUNE_TRANSITION_FLAG_NONBLANK_TO_BLANK;
+		flags |= RUNE_TRANSITION_FLAG_NONBLANK_TO_BLANK;
 	}
 
 	if (rune_get_flag(src_rune_flags, RUNE_FLAG_WORD) && rune_get_flag(dst_rune_flags, RUNE_FLAG_PUNCT)) {
-		flags.bits |= RUNE_TRANSITION_FLAG_WORD_TO_PUNCT;
+		flags |= RUNE_TRANSITION_FLAG_WORD_TO_PUNCT;
 	}
 
 	if (rune_get_flag(src_rune_flags, RUNE_FLAG_PUNCT) && rune_get_flag(dst_rune_flags, RUNE_FLAG_WORD)) {
-		flags.bits |= RUNE_TRANSITION_FLAG_PUNCT_TO_WORD;
+		flags |= RUNE_TRANSITION_FLAG_PUNCT_TO_WORD;
 	}
 
 	if (rune_get_flag(src_rune_flags, RUNE_FLAG_BLANK) && !rune_get_flag(dst_rune_flags, RUNE_FLAG_BLANK)) {
-		flags.bits |= RUNE_TRANSITION_FLAG_BLANK_TO_NONBLANK;
+		flags |= RUNE_TRANSITION_FLAG_BLANK_TO_NONBLANK;
 	}
 
 	return flags;
@@ -507,7 +536,7 @@ inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(TxtBuf *txtbu
 
 inline static RuneTransitionFlag rune_transition_get_flag(RuneTransitionFlags flags, RuneTransitionFlag flag)
 {
-	RuneTransitionFlag result = flags.bits & flag;
+	RuneTransitionFlag result = flags & flag;
 
 	return result;
 }
