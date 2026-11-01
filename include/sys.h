@@ -3,17 +3,15 @@
 #ifndef SYS_H
 #define SYS_H
 
-typedef struct FileBuf {
-	size_t size;
-	void *buf;
-} FileBuf;
+#include "lib.h"
 
 /**
  * @brief Reads an entire file into memory.
  *
+ * @param arena
  * @param path The full path to the file.
- * @return A buffer of the file
+ * @return MemBuf
  */
-FileBuf sys_read_file(const char *path);
+MemBuf sys_read_file(Arena *arena, const char *path);
 
 #endif // SYS_H

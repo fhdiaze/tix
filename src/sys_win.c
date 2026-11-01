@@ -38,8 +38,6 @@
 #define BLUE_BITS(c) ((c & BLUE_MASK) >> BLUE_SHIFT)
 
 typedef struct WinState {
-	Storage storage;
-
 	uint8_t is_running;
 } WinState;
 
@@ -337,22 +335,8 @@ static inline uint32_t file_get_last_write_time(const char *const file_path, FIL
 	return 1U;
 }
 
-static uint32_t file_free_memory(Arena *arena, FileBuf *file)
+static void sys_file_read(Arena *arena, const char *const path, MemBuf *membuf)
 {
-	uint32_t result = 0U;
-
-	if (file->buf) {
-		result = arena_pop(arena, file->size);
-		*file = (FileBuf){};
-	}
-
-	return result;
-}
-
-static FileBuf sys_file_read(Arena *arena, const char *const path)
-{
-	FileBuf result = {};
-
 	HANDLE handle =
 		CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (handle != INVALID_HANDLE_VALUE) {
@@ -360,18 +344,19 @@ static FileBuf sys_file_read(Arena *arena, const char *const path)
 		if (GetFileSizeEx(handle, &filesize_struct)) {
 			uint32_t file_size = (uint32_t)(filesize_struct.QuadPart);
 			ArenaMark mark = arena_mark(arena);
-			result.buf = arena_push_zero(arena, file_size);
+			membuf->buf = arena_push_zero(arena, file_size);
 
-			if (result.buf) {
+			if (membuf->buf) {
 				DWORD read_size = 0;
-				if (ReadFile(handle, result.buf, file_size, &read_size, nullptr) && read_size == file_size) {
-					result.size = file_size;
+				if (ReadFile(handle, membuf->buf, file_size, &read_size, nullptr) && read_size == file_size) {
+					membuf->size = file_size;
+					membuf->size_max = file_size;
 				} else {
 					LOG_ERROR("failed to read the file: %s", path);
 
 					arena_rewind(&mark);
 
-					result = (FileBuf){};
+					*membuf = (MemBuf){};
 				}
 			} else {
 				ASSERT(false && "failed to allocate memory for the content of file");
@@ -388,8 +373,6 @@ static FileBuf sys_file_read(Arena *arena, const char *const path)
 		ASSERT(false && "failed to open the file");
 		LOG_ERROR("failed to open the file: %s", path);
 	}
-
-	return result;
 }
 
 inline static void keyboard_process_message(KeyState *key_state, uint32_t was_down, uint32_t is_down)
@@ -411,10 +394,6 @@ static unsigned long WINAPI render_run(void *param)
 		goto END_ERROR;
 	}
 
-	// perm (Tix, ), renderer(atlas, tiles, scratch), buffers
-	size_t renderer_buf_size = (size_t)ATLAS_TILE_SIZE_MAX * 20;
-	size_t app_buf_size = sizeof(Tix) + renderer_buf_size + BUFFER_POOL_SIZE_MAX;
-
 	BITMAPINFO bitmap_info = {
 		.bmiHeader = {
 			.biSize = sizeof(BITMAPINFOHEADER),
@@ -424,42 +403,24 @@ static unsigned long WINAPI render_run(void *param)
 		},
 	};
 
-	void *app_buf =
+	Tix *tix =
 		// NOLINTNEXTLINE(performance-no-int-to-ptr): fixed base address for deterministic pointers across runs
 		// VirtualAlloc(MEMORY_BASE_ADDRESS, app_buf_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
 		// MEMORY_BASE_ADDRESS conflicts with ASan's shadow memory region, so the reservation fails under ASan builds
-		VirtualAlloc(nullptr, app_buf_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	ASSERT(app_buf);
-	if (!app_buf) {
-		LOG_ERROR("unable to allocate %zu bytes for the app", app_buf_size);
+		VirtualAlloc(nullptr, sizeof(Tix), MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	ASSERT(tix);
+	if (!tix) {
+		LOG_ERROR("unable to allocate %zu bytes for the app", sizeof(Tix));
 		goto END_ERROR;
 	}
 
 	WinState win_state = {
-		.storage = {
-			.buf = app_buf,
-			.buf_size = app_buf_size,
-		},
 		.is_running = 1U,
 	};
 
-	Tix *tix = (Tix *)win_state.storage.buf;
-
-	if (!win_state.storage.is_initialized) {
-		arena_init(&tix->arena, win_state.storage.buf_size - sizeof(Tix),
-		           (unsigned char *)win_state.storage.buf + sizeof(Tix));
-
-		void *renderer_buf = arena_push(&tix->arena, renderer_buf_size);
-		ASSERT(renderer_buf);
-		ASSERT(tix->arena.offset == renderer_buf_size);
-		arena_init(&tix->renderer_arena, renderer_buf_size, renderer_buf);
-
-		void *buffers_arena_buf = arena_push(&tix->arena, BUFFER_POOL_SIZE_MAX);
-		ASSERT(buffers_arena_buf);
-		ASSERT(tix->arena.offset == renderer_buf_size + BUFFER_POOL_SIZE_MAX);
-		arena_init(&tix->buffers_arena, BUFFER_POOL_SIZE_MAX, buffers_arena_buf);
-
-		win_state.storage.is_initialized = 1U;
+	if (tix->txtbufs_arena.size == 0) {
+		arena_init(&tix->renderer_arena, (size_t)RENDERER_BUFFER_SIZE, tix->renderer_buf);
+		arena_init(&tix->txtbufs_arena, TXTBUF_ARENA_SIZE_MAX, tix->txtbufs_buf);
 	}
 
 	// pt: physical unit - 1 point = 1/72 inch
@@ -610,7 +571,7 @@ static unsigned long WINAPI render_run(void *param)
 		}
 
 		if (new_width_px != tix->framebuf.width_px || new_height_px != tix->framebuf.height_px) {
-			if (new_width_px * new_height_px * PIXEL_SIZE <= BACKBUF_SIZE_MAX) {
+			if (new_width_px * new_height_px * PIXEL_SIZE <= FRAMEBUF_SIZE_MAX) {
 				tix_update_framebuf_dims(tix, new_width_px, new_height_px);
 			} else {
 				LOG_ERROR("unable to allocate %zu bytes for the backbuffer",
@@ -619,7 +580,7 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		}
 
-		ASSERT(tix->framebuf.width_px * tix->framebuf.height_px * PIXEL_SIZE <= BACKBUF_SIZE_MAX);
+		ASSERT(tix->framebuf.width_px * tix->framebuf.height_px * PIXEL_SIZE <= FRAMEBUF_SIZE_MAX);
 
 		if (tix->framebuf.width_px == 0 || tix->framebuf.height_px == 0) {
 			continue;
@@ -632,7 +593,7 @@ static unsigned long WINAPI render_run(void *param)
 		FILETIME current_write_time = {};
 		if (!tix->txtbuf.filebuf.buf) {
 			tix->txtbuf.lines_count = 0;
-			tix->txtbuf.filebuf = sys_file_read(&tix->buffers_arena, file_path);
+			sys_file_read(&tix->txtbufs_arena, file_path, &tix->txtbuf.filebuf);
 			if (tix->txtbuf.filebuf.buf) {
 				file_get_last_write_time(file_path, &file_previous_write_time);
 				was_file_updated = TRUE;
@@ -641,10 +602,13 @@ static unsigned long WINAPI render_run(void *param)
 			}
 		} else if (file_get_last_write_time(file_path, &current_write_time)) {
 			if (CompareFileTime(&current_write_time, &file_previous_write_time) > 0) {
-				file_free_memory(&tix->buffers_arena, &tix->txtbuf.filebuf);
+				if (tix->txtbuf.filebuf.buf) {
+					arena_pop(&tix->txtbufs_arena, tix->txtbuf.filebuf.size_max);
+					tix->txtbuf.filebuf = (MemBuf){};
+				}
 
 				tix->txtbuf.lines_count = 0;
-				tix->txtbuf.filebuf = sys_file_read(&tix->buffers_arena, file_path);
+				sys_file_read(&tix->txtbufs_arena, file_path, &tix->txtbuf.filebuf);
 
 				if (tix->txtbuf.filebuf.buf) {
 					was_file_updated = TRUE;
@@ -738,42 +702,42 @@ static unsigned long WINAPI render_run(void *param)
 		// Process input
 		// =============================================================================
 		uint32_t was_caret_line_changed = FALSE;
-		if (tix_input.keys[KEY_CODE_K].ended_down && tix->caret.pos.line_idx > 0) {
-			--tix->caret.pos.line_idx;
+		if (tix_input.keys[KEY_CODE_K].ended_down && tix->txtbuf.caret.pos.line_idx > 0) {
+			--tix->txtbuf.caret.pos.line_idx;
 			was_caret_line_changed = TRUE;
 		}
 
-		if (tix_input.keys[KEY_CODE_J].ended_down && tix->caret.pos.line_idx + 1 < tix->txtbuf.lines_count) {
-			++tix->caret.pos.line_idx;
+		if (tix_input.keys[KEY_CODE_J].ended_down && tix->txtbuf.caret.pos.line_idx + 1 < tix->txtbuf.lines_count) {
+			++tix->txtbuf.caret.pos.line_idx;
 			was_caret_line_changed = TRUE;
 		}
 
 		if (tix_input.keys[KEY_CODE_U].ended_down && tix_input.keys[KEY_CODE_CTRL].ended_down) {
-			tix->caret.pos.line_idx -= min(tix->caret.pos.line_idx, 10);
+			tix->txtbuf.caret.pos.line_idx -= min(tix->txtbuf.caret.pos.line_idx, 10);
 			was_caret_line_changed = TRUE;
 		}
 
 		if (tix_input.keys[KEY_CODE_D].ended_down && tix_input.keys[KEY_CODE_CTRL].ended_down) {
-			size_t delta = tix->txtbuf.lines_count - tix->caret.pos.line_idx;
-			tix->caret.pos.line_idx += delta > 1 ? min(delta - 1, 10) : 0;
+			size_t delta = tix->txtbuf.lines_count - tix->txtbuf.caret.pos.line_idx;
+			tix->txtbuf.caret.pos.line_idx += delta > 1 ? min(delta - 1, 10) : 0;
 			was_caret_line_changed = TRUE;
 		}
 
 		if (tix_input.keys[KEY_CODE_G].ended_down) {
 			if (tix_input.keys[KEY_CODE_G].half_transition_count > 1 ||
 			    (tix->stack_key_count == 1 && tix->stack_key_codes[0] == KEY_CODE_G)) {
-				tix->caret.pos.line_idx = 0U;
+				tix->txtbuf.caret.pos.line_idx = 0U;
 				was_caret_line_changed = TRUE;
 				tix->stack_key_count = 0U;
 			} else {
-				tix->stack_key_codes[0] = KEY_CODE_G;
-				tix->stack_key_count = 1U;
+				tix->stack_key_codes[tix->stack_key_count] = KEY_CODE_G;
+				++tix->stack_key_count;
 			}
 		}
 
 		if (tix_input.keys[KEY_CODE_B].ended_down) {
 			TxtPos src_pos = {};
-			TxtPos dst_pos = tix->caret.pos;
+			TxtPos dst_pos = tix->txtbuf.caret.pos;
 			uint32_t was_word_started = FALSE;
 
 			for (;;) {
@@ -802,16 +766,15 @@ static unsigned long WINAPI render_run(void *param)
 					break;
 				}
 
-				if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE) ||
-				    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE)) {
-					tix->caret.pos = dst_pos;
+				if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_CARETABLE)) {
+					tix->txtbuf.caret.pos = dst_pos;
 				}
 			}
 		}
 
 		if (tix_input.keys[KEY_CODE_W].ended_down) {
 			TxtPos src_pos = {};
-			TxtPos dst_pos = tix->caret.pos;
+			TxtPos dst_pos = tix->txtbuf.caret.pos;
 			for (;;) {
 				src_pos = dst_pos;
 				dst_pos = txtbuf_next_pos(&tix->txtbuf, src_pos);
@@ -826,9 +789,8 @@ static unsigned long WINAPI render_run(void *param)
 				RuneTransitionFlags transition_flags =
 					txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos);
 
-				if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE) ||
-				    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE)) {
-					tix->caret.pos = dst_pos;
+				if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_CARETABLE)) {
+					tix->txtbuf.caret.pos = dst_pos;
 				}
 
 				if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_BLANK_TO_NONBLANK) ||
@@ -844,7 +806,7 @@ static unsigned long WINAPI render_run(void *param)
 			if (tix->stack_key_count == 1 && tix->stack_key_codes[0] == KEY_CODE_G) {
 				tix->stack_key_count = 0U;
 				TxtPos src_pos = {};
-				TxtPos dst_pos = tix->caret.pos;
+				TxtPos dst_pos = tix->txtbuf.caret.pos;
 
 				for (;;) {
 					src_pos = dst_pos;
@@ -860,9 +822,8 @@ static unsigned long WINAPI render_run(void *param)
 					RuneTransitionFlags transition_flags =
 						txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos);
 
-					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE) ||
-					    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE)) {
-						tix->caret.pos = dst_pos;
+					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_CARETABLE)) {
+						tix->txtbuf.caret.pos = dst_pos;
 					}
 
 					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_BLANK_TO_NONBLANK) ||
@@ -874,7 +835,7 @@ static unsigned long WINAPI render_run(void *param)
 				}
 			} else {
 				TxtPos src_pos = {};
-				TxtPos dst_pos = tix->caret.pos;
+				TxtPos dst_pos = tix->txtbuf.caret.pos;
 				uint32_t was_word_started = FALSE;
 
 				for (;;) {
@@ -902,49 +863,48 @@ static unsigned long WINAPI render_run(void *param)
 						break;
 					}
 
-					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE) ||
-					    rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE)) {
-						tix->caret.pos = dst_pos;
+					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_CARETABLE)) {
+						tix->txtbuf.caret.pos = dst_pos;
 					}
 				}
 			}
 		}
 
 		if (tix_input.keys[KEY_CODE_UG].ended_down) {
-			tix->caret.pos.line_idx = tix->txtbuf.lines_count > 0 ? tix->txtbuf.lines_count - 1 : 0;
+			tix->txtbuf.caret.pos.line_idx = tix->txtbuf.lines_count > 0 ? tix->txtbuf.lines_count - 1 : 0;
 			was_caret_line_changed = TRUE;
 		}
 
 		if (tix_input.keys[KEY_CODE_H].ended_down) {
-			if (tix->caret.pos.col_idx > 0) {
-				--tix->caret.pos.col_idx;
+			if (tix->txtbuf.caret.pos.col_idx > 0) {
+				--tix->txtbuf.caret.pos.col_idx;
 			}
-			tix->caret.wanted_col_idx = tix->caret.pos.col_idx;
+			tix->txtbuf.caret.wanted_col_idx = tix->txtbuf.caret.pos.col_idx;
 		}
 
-		size_t caret_line_size = tix->txtbuf.lines[tix->caret.pos.line_idx].size;
+		size_t caret_line_size = tix->txtbuf.lines[tix->txtbuf.caret.pos.line_idx].size;
 		if (tix_input.keys[KEY_CODE_L].ended_down) {
-			if (tix->caret.pos.col_idx + 1 < caret_line_size) {
-				TxtPos dst_pos = txtbuf_next_pos(&tix->txtbuf, tix->caret.pos);
+			if (tix->txtbuf.caret.pos.col_idx + 1 < caret_line_size) {
+				TxtPos dst_pos = txtbuf_next_pos(&tix->txtbuf, tix->txtbuf.caret.pos);
 				Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos);
 				RuneFlags flags = txtbuf_get_rune_flags(&tix->txtbuf, &dst_pos, dst_rune);
 				if (rune_get_flag(flags, RUNE_FLAG_CARETABLE)) {
-					++tix->caret.pos.col_idx;
+					++tix->txtbuf.caret.pos.col_idx;
 				}
 			}
-			tix->caret.wanted_col_idx = tix->caret.pos.col_idx;
+			tix->txtbuf.caret.wanted_col_idx = tix->txtbuf.caret.pos.col_idx;
 		}
 
 		if (tix_input.keys[KEY_CODE_LOWBAR].ended_down) {
 			size_t char_col_idx = 0;
 			char *file_chars = (char *)tix->txtbuf.filebuf.buf;
 			while (char_col_idx < caret_line_size) {
-				size_t offset = tix->txtbuf.lines[tix->caret.pos.line_idx].file_offset + char_col_idx;
+				size_t offset = tix->txtbuf.lines[tix->txtbuf.caret.pos.line_idx].file_offset + char_col_idx;
 				ASSERT(offset < tix->txtbuf.filebuf.size);
 				char file_char = file_chars[offset];
 				if (file_char > RUNE_DIRECT_MIN && file_char <= RUNE_DIRECT_MAX) {
-					tix->caret.wanted_col_idx = char_col_idx;
-					tix->caret.pos.col_idx = char_col_idx;
+					tix->txtbuf.caret.wanted_col_idx = char_col_idx;
+					tix->txtbuf.caret.pos.col_idx = char_col_idx;
 
 					break;
 				}
@@ -954,56 +914,56 @@ static unsigned long WINAPI render_run(void *param)
 		}
 
 		if (tix_input.keys[KEY_CODE_DOLLAR].ended_down) {
-			tix->caret.pos = txtbuf_last_caretable_pos(&tix->txtbuf, tix->caret.pos.line_idx);
-			tix->caret.wanted_col_idx = CARET_WANTED_COL_IDX_END;
+			tix->txtbuf.caret.pos = txtbuf_last_caretable_pos(&tix->txtbuf, tix->txtbuf.caret.pos.line_idx);
+			tix->txtbuf.caret.wanted_col_idx = CARET_WANTED_COL_IDX_END;
 		}
 
 		if (tix_input.keys[KEY_CODE_ZERO].ended_down) {
-			tix->caret.pos.col_idx = 0;
-			tix->caret.wanted_col_idx = tix->caret.pos.col_idx;
+			tix->txtbuf.caret.pos.col_idx = 0;
+			tix->txtbuf.caret.wanted_col_idx = tix->txtbuf.caret.pos.col_idx;
 		}
 
 		if (was_caret_line_changed) {
-			if (tix->caret.pos.line_idx < tix->scroll_idx) {
-				tix->scroll_idx = tix->caret.pos.line_idx;
+			if (tix->txtbuf.caret.pos.line_idx < tix->txtbuf.scroll_idx) {
+				tix->txtbuf.scroll_idx = tix->txtbuf.caret.pos.line_idx;
 			} else {
-				size_t relative_line_idx = tix->caret.pos.line_idx - tix->scroll_idx;
+				size_t relative_line_idx = tix->txtbuf.caret.pos.line_idx - tix->txtbuf.scroll_idx;
 				if (relative_line_idx >= tix->grid.tile_count_y) {
-					tix->scroll_idx = tix->caret.pos.line_idx - tix->grid.tile_count_y + 1;
+					tix->txtbuf.scroll_idx = tix->txtbuf.caret.pos.line_idx - tix->grid.tile_count_y + 1;
 				}
 			}
 
-			if (tix->caret.wanted_col_idx > caret_line_size) {
-				tix->caret.pos = txtbuf_last_caretable_pos(&tix->txtbuf, tix->caret.pos.line_idx);
+			if (tix->txtbuf.caret.wanted_col_idx > caret_line_size) {
+				tix->txtbuf.caret.pos = txtbuf_last_caretable_pos(&tix->txtbuf, tix->txtbuf.caret.pos.line_idx);
 			} else {
-				tix->caret.pos.col_idx = tix->caret.wanted_col_idx;
+				tix->txtbuf.caret.pos.col_idx = tix->txtbuf.caret.wanted_col_idx;
 			}
 		}
 
 		// Process mouse wheel
 		if (tix_input.mouse_notches != 0) {
-			int64_t new_scroll_offset = (int64_t)tix->scroll_idx;
+			int64_t new_scroll_offset = (int64_t)tix->txtbuf.scroll_idx;
 			new_scroll_offset -= LINES_PER_NOTCH * (int64_t)tix_input.mouse_notches;
 			new_scroll_offset = min(new_scroll_offset, (int64_t)tix->txtbuf.lines_count - 1);
 			new_scroll_offset = max(new_scroll_offset, 0);
 
 			ASSERT(new_scroll_offset >= 0);
 
-			tix->scroll_idx = (size_t)new_scroll_offset;
+			tix->txtbuf.scroll_idx = (size_t)new_scroll_offset;
 		}
 
-		ASSERT((tix->txtbuf.lines_count == 0 && tix->caret.pos.line_idx == 0) ||
-		       tix->caret.pos.line_idx < tix->txtbuf.lines_count);
+		ASSERT((tix->txtbuf.lines_count == 0 && tix->txtbuf.caret.pos.line_idx == 0) ||
+		       tix->txtbuf.caret.pos.line_idx < tix->txtbuf.lines_count);
 
-		ASSERT(tix->scroll_idx >= 0);
-		ASSERT(tix->txtbuf.lines_count == 0 || tix->scroll_idx < tix->txtbuf.lines_count);
+		ASSERT(tix->txtbuf.scroll_idx >= 0);
+		ASSERT(tix->txtbuf.lines_count == 0 || tix->txtbuf.scroll_idx < tix->txtbuf.lines_count);
 
 		// bitmap_draw_rectangle(&tix->backbuf.buf, tix->backbuf.width_px, tix->backbuf.height_px, 0.0F, 0.0F,
 		//                       (float)tix->backbuf.width_px, (float)tix->backbuf.height_px, BG_COLOR);
 		uint32_t bg_color = BG_COLOR;
 		uint32_t fg_color = FG_COLOR;
 		for (unsigned tile_idx_y = 0; tix->grid.tile_height_px * tile_idx_y < tix->framebuf.height_px; ++tile_idx_y) {
-			size_t line_idx = tix->scroll_idx + tile_idx_y;
+			size_t line_idx = tix->txtbuf.scroll_idx + tile_idx_y;
 			size_t line_size = 0;
 			if (line_idx < tix->txtbuf.lines_count) {
 				line_size = tix->txtbuf.lines[line_idx].size;
@@ -1021,7 +981,7 @@ static unsigned long WINAPI render_run(void *param)
 			// =============================================================================
 			// Render
 			// =============================================================================
-			Bytes tile_buf = {};
+			MemBuf tile_buf = {};
 			for (uint32_t tile_idx_x = 0; tile_idx_x * tix->grid.tile_width_px < tix->framebuf.width_px; ++tile_idx_x) {
 				char tile_char = ' ';
 				uint32_t tile_min_x_px = tile_idx_x * tix->grid.tile_width_px;
@@ -1039,7 +999,7 @@ static unsigned long WINAPI render_run(void *param)
 					}
 				}
 
-				if (line_idx == tix->caret.pos.line_idx && tile_idx_x == tix->caret.pos.col_idx) {
+				if (line_idx == tix->txtbuf.caret.pos.line_idx && tile_idx_x == tix->txtbuf.caret.pos.col_idx) {
 					fg_color = BG_COLOR;
 					bg_color = FG_COLOR;
 				} else {
@@ -1054,7 +1014,7 @@ static unsigned long WINAPI render_run(void *param)
 				size_t atlas_offset = (size_t)atlas_idx.value * tix->atlas.tile_size;
 				ASSERT(atlas_offset < tix->atlas.buf_size);
 				tile_buf.buf = tix->atlas.buf + atlas_offset;
-				tile_buf.buf_size = tix->atlas.tile_size;
+				tile_buf.size = tix->atlas.tile_size;
 
 				// TODO(fredy): what happen with width 1.5F?
 

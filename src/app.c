@@ -11,8 +11,8 @@
 
 #define CARET_WANTED_COL_IDX_END SIZE_MAX
 #define PIXEL_SIZE 4
-#define BACKBUF_SIZE_MAX (7680 * 4320 * PIXEL_SIZE)
-#define BUFFER_POOL_SIZE_MAX GB_TO_BYTE(3ULL)
+#define FRAMEBUF_SIZE_MAX (7680 * 4320 * PIXEL_SIZE)
+#define TXTBUF_ARENA_SIZE_MAX GB_TO_BYTE(3ULL)
 #define LINES_PER_NOTCH 3
 #define POINTS_PER_INCH 72
 #define TILE_SIDE_PX_MAX 256
@@ -26,6 +26,7 @@
 #define RUNE_IS_DIRECT(c) (c >= RUNE_DIRECT_MIN && c <= RUNE_DIRECT_MAX)
 #define ATLAS_PIXEL_SIZE 1
 #define ATLAS_TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE)
+#define RENDERER_BUFFER_SIZE (ATLAS_TILE_SIZE_MAX * 20)
 #define ATLAS_BUF_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE * RUNE_DIRECT_COUNT)
 
 typedef uint32_t RuneTransitionFlags;
@@ -41,12 +42,18 @@ typedef enum RuneTransitionFlag : uint32_t {
 	RUNE_TRANSITION_FLAG_CARETABLE_TO_NONCARETABLE = (1U << 7U),
 	RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE = (1U << 8U),
 	RUNE_TRANSITION_FLAG_NONCARETABLE_TO_NONCARETABLE = (1U << 9U),
+	RUNE_TRANSITION_FLAG_ANY_TO_CARETABLE = (1U << 10U),
 } RuneTransitionFlag;
 
 typedef uint32_t CaretFlags;
 
 typedef enum CaretFlag : uint32_t {
 	CARET_FLAG_SELECTABLE = (1U << 0U),
+	CARET_FLAG_NORMAL = (1U << 1U),
+	CARET_FLAG_VIEW = (1U << 2U),
+	CARET_FLAG_INSERT = (1U << 3U),
+	CARET_FLAG_BLOCK = (1U << 4U),
+	CARET_FLAG_ACTIVE = (1U << 5U),
 } CaretFlag;
 
 typedef uint32_t RuneFlags;
@@ -198,14 +205,6 @@ typedef enum ContextMode : uint8_t {
 	CONTEXT_MODE_FILE,
 } ContextMode;
 
-typedef enum CaretMode : uint8_t {
-	CARET_MODE_NORMAL,
-	CARET_MODE_VIEW,
-	CARET_MODE_INSERT,
-	CARET_MODE_BLOCK,
-	CARET_MODE_ACTIVE,
-} CaretMode;
-
 typedef enum Command : uint8_t {
 	COMMAND_NEXT_WORD,
 	COMMAND_PREV_WORD,
@@ -259,13 +258,6 @@ typedef struct Line {
 	uint8_t contains_complex_chars;
 } Line;
 
-typedef struct Storage {
-	size_t buf_size;
-	void *buf;
-
-	uint8_t is_initialized;
-} Storage;
-
 typedef struct TxtPos {
 	size_t line_idx;
 	size_t col_idx;
@@ -274,7 +266,7 @@ typedef struct TxtPos {
 typedef struct Caret {
 	TxtPos pos;
 	size_t wanted_col_idx;
-	uint32_t flags;
+	CaretFlags flags;
 } Caret;
 
 /**
@@ -298,25 +290,27 @@ typedef struct Atlas {
 
 typedef struct FrameBuf {
 	size_t buf_size;
-	unsigned char buf[BACKBUF_SIZE_MAX];
+	unsigned char buf[FRAMEBUF_SIZE_MAX];
 	uint32_t pitch_size;
 	uint32_t width_px;
 	uint32_t height_px;
 } FrameBuf;
 
-typedef struct Piece {
-	size_t start;
-} Piece;
-
-typedef struct PieceTable {
-	Piece pieces[100];
-	size_t pieces_count;
-} PieceTable;
+typedef struct GapBuf {
+	size_t buf_size;
+	unsigned char *buf;
+	size_t buf_size_max;
+	size_t gap_offset;
+	size_t gap_size;
+} GapBuf;
 
 typedef struct TxtBuf {
 	Line lines[LINES_COUNT_MAX];
 	size_t lines_count;
-	FileBuf filebuf;
+	size_t scroll_idx;
+	MemBuf filebuf;
+	Caret caret;
+	GapBuf gapbuf;
 } TxtBuf;
 
 typedef struct TileGrid {
@@ -331,19 +325,17 @@ typedef struct TileGrid {
 } TileGrid;
 
 typedef struct Tix {
-	Arena arena;
+	unsigned char renderer_buf[RENDERER_BUFFER_SIZE];
+	unsigned char txtbufs_buf[TXTBUF_ARENA_SIZE_MAX];
 	Arena renderer_arena;
-	Arena buffers_arena;
+	Arena txtbufs_arena;
 	Atlas atlas;
-	Caret caret;
-	size_t scroll_idx;
 	FrameBuf framebuf;
 	TxtBuf txtbuf;
 	TileGrid grid;
 	KeyState stack_key_states[KEY_STACK_COUNT_MAX];
-	uint16_t stack_key_count;
 	ContextMode context_mode;
-	CaretMode caret_mode;
+	uint16_t stack_key_count;
 	KeyCode stack_key_codes[KEY_STACK_COUNT_MAX];
 	char context_path[FILE_PATH_SIZE_MAX];
 } Tix;
@@ -359,14 +351,14 @@ static void txtbuf_split(TxtBuf *txtbuf)
 {
 }
 
-void app_init(Storage *storage)
+void app_init(Tix *tix)
 {
 	txtbuf_split(nullptr);
 }
 
 static void tix_update_framebuf_dims(Tix *tix, uint32_t width_px, uint32_t height_px)
 {
-	ASSERT(width_px * height_px * PIXEL_SIZE <= BACKBUF_SIZE_MAX);
+	ASSERT(width_px * height_px * PIXEL_SIZE <= FRAMEBUF_SIZE_MAX);
 
 	tix->framebuf.width_px = width_px;
 	tix->framebuf.height_px = height_px;
@@ -492,10 +484,12 @@ inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(TxtBuf *txtbu
 			flags |= RUNE_TRANSITION_FLAG_CARETABLE_TO_NONCARETABLE;
 		} else {
 			flags |= RUNE_TRANSITION_FLAG_CARETABLE_TO_CARETABLE;
+			flags |= RUNE_TRANSITION_FLAG_ANY_TO_CARETABLE;
 		}
 	} else {
 		if (rune_get_flag(dst_rune_flags, RUNE_FLAG_CARETABLE)) {
 			flags |= RUNE_TRANSITION_FLAG_NONCARETABLE_TO_CARETABLE;
+			flags |= RUNE_TRANSITION_FLAG_ANY_TO_CARETABLE;
 		} else {
 			flags |= RUNE_TRANSITION_FLAG_NONCARETABLE_TO_NONCARETABLE;
 		}

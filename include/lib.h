@@ -36,6 +36,20 @@
 #endif
 
 // =============================================================================
+// Error
+// =============================================================================
+typedef uint32_t ErrorFlags;
+
+typedef enum ErrorFlag {
+	ERROR_FLAG_RETRYABLE = (1U << 0U),
+} ErrorFlag;
+
+typedef struct Error {
+	uint32_t code;
+	ErrorFlags flags;
+} Error;
+
+// =============================================================================
 // Standard
 // =============================================================================
 #if DEBUG
@@ -336,14 +350,15 @@ inline Vtwo vtwo_normalize(Vtwo a)
 #define ARENA_PUSH_ARRAY_ZERO(arena, type, count) (type *)arena_push_zero((arena), sizeof(type) * (count))
 #define ARENA_PUSH_STRUCT_ZERO(arena, type) (type *)arena_push_zero((arena), sizeof(type))
 
-typedef struct Bytes {
+typedef struct MemBuf {
 	void *buf;
-	size_t buf_size;
-} Bytes;
+	size_t size;
+	size_t size_max;
+} MemBuf;
 
 typedef struct Arena {
 	size_t offset;
-	size_t buf_size;
+	size_t size;
 	unsigned char *buf;
 } Arena;
 
@@ -378,7 +393,7 @@ inline void pool_init(Pool *pool, void *buf, size_t buf_size, size_t block_size)
 
 inline void arena_init(Arena *restrict arena, const size_t buf_size, unsigned char *const restrict buf)
 {
-	arena->buf_size = buf_size;
+	arena->size = buf_size;
 	arena->buf = buf;
 	arena->offset = 0;
 }
@@ -387,9 +402,9 @@ inline void *arena_push(Arena *arena, size_t size_byte)
 {
 	void *result = nullptr;
 
-	ASSERT(arena->offset + size_byte <= arena->buf_size);
+	ASSERT(arena->offset + size_byte <= arena->size);
 
-	if (arena->offset + size_byte <= arena->buf_size) {
+	if (arena->offset + size_byte <= arena->size) {
 		result = arena->buf + arena->offset;
 		arena->offset += size_byte;
 	}
