@@ -38,16 +38,10 @@
 // =============================================================================
 // Error
 // =============================================================================
-typedef uint32_t ErrorFlags;
-
-typedef enum ErrorFlag {
-	ERROR_FLAG_RETRYABLE = (1U << 0U),
-} ErrorFlag;
-
-typedef struct Error {
-	uint32_t code;
-	ErrorFlags flags;
-} Error;
+typedef enum ErrCode {
+	ERR_CODE_NONE,
+	ERR_CODE_FAILED,
+} ErrCode;
 
 // =============================================================================
 // Standard
@@ -353,7 +347,6 @@ inline Vtwo vtwo_normalize(Vtwo a)
 typedef struct MemBuf {
 	void *buf;
 	size_t size;
-	size_t size_max;
 } MemBuf;
 
 typedef struct Arena {

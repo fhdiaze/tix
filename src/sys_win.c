@@ -335,8 +335,10 @@ static inline uint32_t file_get_last_write_time(const char *const file_path, FIL
 	return 1U;
 }
 
-static void sys_file_read(Arena *arena, const char *const path, MemBuf *membuf)
+MemBuf sys_file_read(Arena *arena, const char *const path)
 {
+	MemBuf result = {};
+
 	HANDLE handle =
 		CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (handle != INVALID_HANDLE_VALUE) {
@@ -344,19 +346,18 @@ static void sys_file_read(Arena *arena, const char *const path, MemBuf *membuf)
 		if (GetFileSizeEx(handle, &filesize_struct)) {
 			uint32_t file_size = (uint32_t)(filesize_struct.QuadPart);
 			ArenaMark mark = arena_mark(arena);
-			membuf->buf = arena_push_zero(arena, file_size);
+			result.buf = arena_push_zero(arena, file_size);
 
-			if (membuf->buf) {
+			if (result.buf) {
 				DWORD read_size = 0;
-				if (ReadFile(handle, membuf->buf, file_size, &read_size, nullptr) && read_size == file_size) {
-					membuf->size = file_size;
-					membuf->size_max = file_size;
+				if (ReadFile(handle, result.buf, file_size, &read_size, nullptr) && read_size == file_size) {
+					result.size = read_size;
 				} else {
 					LOG_ERROR("failed to read the file: %s", path);
 
 					arena_rewind(&mark);
 
-					*membuf = (MemBuf){};
+					result = (MemBuf){};
 				}
 			} else {
 				ASSERT(false && "failed to allocate memory for the content of file");
@@ -373,6 +374,8 @@ static void sys_file_read(Arena *arena, const char *const path, MemBuf *membuf)
 		ASSERT(false && "failed to open the file");
 		LOG_ERROR("failed to open the file: %s", path);
 	}
+
+	return result;
 }
 
 inline static void keyboard_process_message(KeyState *key_state, uint32_t was_down, uint32_t is_down)
@@ -593,7 +596,7 @@ static unsigned long WINAPI render_run(void *param)
 		FILETIME current_write_time = {};
 		if (!tix->txtbuf.filebuf.buf) {
 			tix->txtbuf.lines_count = 0;
-			sys_file_read(&tix->txtbufs_arena, file_path, &tix->txtbuf.filebuf);
+			tix->txtbuf.filebuf = sys_file_read(&tix->txtbufs_arena, file_path);
 			if (tix->txtbuf.filebuf.buf) {
 				file_get_last_write_time(file_path, &file_previous_write_time);
 				was_file_updated = TRUE;
@@ -603,12 +606,12 @@ static unsigned long WINAPI render_run(void *param)
 		} else if (file_get_last_write_time(file_path, &current_write_time)) {
 			if (CompareFileTime(&current_write_time, &file_previous_write_time) > 0) {
 				if (tix->txtbuf.filebuf.buf) {
-					arena_pop(&tix->txtbufs_arena, tix->txtbuf.filebuf.size_max);
+					arena_pop(&tix->txtbufs_arena, tix->txtbuf.filebuf.size);
 					tix->txtbuf.filebuf = (MemBuf){};
 				}
 
 				tix->txtbuf.lines_count = 0;
-				sys_file_read(&tix->txtbufs_arena, file_path, &tix->txtbuf.filebuf);
+				tix->txtbuf.filebuf = sys_file_read(&tix->txtbufs_arena, file_path);
 
 				if (tix->txtbuf.filebuf.buf) {
 					was_file_updated = TRUE;

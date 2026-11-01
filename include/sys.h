@@ -10,8 +10,8 @@
  *
  * @param arena
  * @param path The full path to the file.
- * @return MemBuf
+ * @return ErrCode The error code
  */
-MemBuf sys_read_file(Arena *arena, const char *path);
+MemBuf sys_file_read(Arena *arena, const char *path);
 
 #endif // SYS_H
