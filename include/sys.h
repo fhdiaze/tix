@@ -14,4 +14,6 @@
  */
 MemBuf sys_file_read(Arena *arena, const char *path);
 
+size_t sys_file_get_size(const char *path);
+
 #endif // SYS_H
