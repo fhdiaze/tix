@@ -11,13 +11,14 @@
 #define CARET_WANTED_COL_IDX_END SIZE_MAX
 #define PIXEL_SIZE 4
 #define FRAMEBUF_SIZE_MAX (7680 * 4320 * PIXEL_SIZE)
-#define TXTBUF_ARENA_SIZE_MAX GB_TO_BYTE(3ULL)
+#define TXTBUFS_BUF_SIZE_MAX GB_TO_BYTE(3ULL)
 #define LINES_PER_NOTCH 3
 #define POINTS_PER_INCH 72
 #define TILE_SIDE_PX_MAX 256
 #define TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * PIXEL_SIZE)
 #define KEY_STACK_COUNT_MAX 8
 #define LINES_COUNT_MAX 100000000
+#define LINES_BUF_SIZE_MAX (LINES_COUNT_MAX * sizeof(Line))
 #define FILE_PATH_SIZE_MAX 4096
 #define RUNE_DIRECT_MIN 32  // SP (Space)
 #define RUNE_DIRECT_MAX 126 // ~ (Tilde)
@@ -27,13 +28,6 @@
 #define ATLAS_TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE)
 #define RENDERER_BUFFER_SIZE (ATLAS_TILE_SIZE_MAX * 20)
 #define ATLAS_BUF_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE * RUNE_DIRECT_COUNT)
-
-#define MEMBUF 1UL
-#define GAPBUF 2UL
-
-#ifndef TXTBUF
-#define TXTBUF GAPBUF
-#endif
 
 typedef uint32_t RuneTransitionFlags;
 
@@ -302,14 +296,14 @@ typedef struct FrameBuf {
 	uint32_t height_px;
 } FrameBuf;
 
-typedef struct GapBuf {
-	Line lines[LINES_COUNT_MAX];
+typedef struct TxtBuf {
+	size_t first_line;
 	size_t lines_count;
-	size_t buf_size;
-	unsigned char *buf;
 	size_t gap_offset;
 	size_t gap_size;
-} GapBuf;
+	size_t buf_size;
+	unsigned char *buf;
+} TxtBuf;
 
 typedef struct RopeBuf {
 	uint32_t place_holder;
@@ -327,45 +321,32 @@ typedef struct TileGrid {
 	uint32_t tile_count_y;
 } TileGrid;
 
-#if TXTBUF == GAPBUF
-typedef GapBuf TXT_BUF;
-#define TXTBUF_GET_RUNE gapbuf_get_rune
-#define TXTBUF_NEXT_POS gapbuf_next_pos
-#define TXTBUF_GET_RUNE_FLAGS gapbuf_get_rune_flags
-#endif
-
 typedef struct View {
-	TXT_BUF *buf;
+	TxtBuf *buf;
 	size_t scroll_idx;
 	Caret caret;
 } View;
 
 typedef struct Tix {
 	unsigned char renderer_buf[RENDERER_BUFFER_SIZE];
-	unsigned char txtbufs_buf[TXTBUF_ARENA_SIZE_MAX];
+	unsigned char txtbufs_buf[TXTBUFS_BUF_SIZE_MAX];
+	unsigned char lines_buf[LINES_BUF_SIZE_MAX];
+
+	Pool lines_pool;
 	Arena renderer_arena;
 	Arena txtbufs_arena;
+
 	Atlas atlas;
 	FrameBuf framebuf;
-	TXT_BUF txtbuf;
+	TxtBuf txtbuf;
 	TileGrid grid;
+	View view;
 	KeyState stack_key_states[KEY_STACK_COUNT_MAX];
 	ContextMode context_mode;
 	uint16_t stack_key_count;
 	KeyCode stack_key_codes[KEY_STACK_COUNT_MAX];
 	char context_path[FILE_PATH_SIZE_MAX];
 } Tix;
-
-// Parsing
-
-// ui: pane, gutter, tab, panel,
-// entities: buffer, document, span/range, anchor, mark, selection
-// structure: tree, lines
-// primitives: chars, code_point, grapheme cluster, glyph, rune,
-
-static void gapbuf_split(GapBuf *gapbuf)
-{
-}
 
 static void tix_update_framebuf_dims(Tix *tix, uint32_t width_px, uint32_t height_px)
 {
@@ -406,7 +387,7 @@ inline static uint32_t txtpos_are_equal(const TxtPos *const one, const TxtPos *c
 	return result;
 }
 
-inline static TxtPos gapbuf_prev_pos(GapBuf *gapbuf, TxtPos pos)
+inline static TxtPos txtbuf_prev_pos(TxtBuf *buf, TxtPos pos)
 {
 	TxtPos prev_pos = pos;
 
@@ -414,21 +395,21 @@ inline static TxtPos gapbuf_prev_pos(GapBuf *gapbuf, TxtPos pos)
 		--prev_pos.col_idx;
 	} else if (prev_pos.line_idx > 0) {
 		--prev_pos.line_idx;
-		ASSERT(gapbuf->lines[prev_pos.line_idx].size > 0);
-		prev_pos.col_idx = gapbuf->lines[prev_pos.line_idx].size - 1;
+		ASSERT(buf->lines[prev_pos.line_idx].size > 0);
+		prev_pos.col_idx = buf->lines[prev_pos.line_idx].size - 1;
 	}
 
 	return prev_pos;
 }
 
-inline static TxtPos gapbuf_next_pos(GapBuf *gapbuf, TxtPos pos)
+inline static TxtPos txtbuf_next_pos(const TxtBuf *const buf, const TxtPos pos)
 {
 	TxtPos result = pos;
 
-	if (pos.line_idx < gapbuf->lines_count) {
-		if (pos.col_idx + 1 < gapbuf->lines[pos.line_idx].size) {
+	if (pos.line_idx < buf->lines_count) {
+		if (pos.col_idx + 1 < buf->lines[pos.line_idx].size) {
 			++result.col_idx;
-		} else if (pos.line_idx + 1 < gapbuf->lines_count) {
+		} else if (pos.line_idx + 1 < buf->lines_count) {
 			++result.line_idx;
 			result.col_idx = 0;
 		}
@@ -437,18 +418,34 @@ inline static TxtPos gapbuf_next_pos(GapBuf *gapbuf, TxtPos pos)
 	return result;
 }
 
-static RuneFlags gapbuf_get_rune_flags(GapBuf *gapbuf, TxtPos *pos, Rune rune)
+// Runes
+
+inline static Rune txtbuf_get_rune(TxtBuf *buf, TxtPos pos)
+{
+	Rune rune = {};
+
+	if (buf->lines[pos.line_idx].size > 0) {
+		ASSERT(pos.col_idx < buf->lines[pos.line_idx].size);
+		size_t offset = buf->lines[pos.line_idx].file_offset + pos.col_idx;
+		ASSERT(offset < buf->buf_size);
+		rune.value = buf->buf[offset];
+	}
+
+	return rune;
+}
+
+static RuneFlags txtbuf_get_rune_flags(TxtBuf *buf, TxtPos *pos, Rune rune)
 {
 	RuneFlags rune_flags = {};
 
 	if (rune.value == '\n') {
 		rune_flags |= RUNE_FLAG_BLANK;
-		if (gapbuf->lines[pos->line_idx].size == 1 && pos->col_idx == 0) {
+		if (buf->lines[pos->line_idx].size == 1 && pos->col_idx == 0) {
 			rune_flags |= RUNE_FLAG_CARETABLE;
 		}
 	} else if (rune.value == '\r') {
 		rune_flags |= RUNE_FLAG_BLANK;
-		if (gapbuf->lines[pos->line_idx].size == 2 && pos->col_idx == 0) {
+		if (buf->lines[pos->line_idx].size == 2 && pos->col_idx == 0) {
 			// NOTE(fredy): assuming the last byte is '\n'
 			rune_flags |= RUNE_FLAG_CARETABLE;
 		}
@@ -482,13 +479,13 @@ inline static RuneFlag rune_get_flag(RuneFlags flags, RuneFlag flag)
 	return result;
 }
 
-inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(GapBuf *gapbuf, Rune src_rune, TxtPos *src_pos,
+inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(TxtBuf *buf, Rune src_rune, TxtPos *src_pos,
                                                                    Rune dst_rune, TxtPos *dst_pos)
 {
 	RuneTransitionFlags flags = {};
 
-	RuneFlags src_rune_flags = gapbuf_get_rune_flags(gapbuf, src_pos, src_rune);
-	RuneFlags dst_rune_flags = gapbuf_get_rune_flags(gapbuf, dst_pos, dst_rune);
+	RuneFlags src_rune_flags = txtbuf_get_rune_flags(buf, src_pos, src_rune);
+	RuneFlags dst_rune_flags = txtbuf_get_rune_flags(buf, dst_pos, dst_rune);
 
 	if (rune_get_flag(src_rune_flags, RUNE_FLAG_CARETABLE)) {
 		if (!rune_get_flag(dst_rune_flags, RUNE_FLAG_CARETABLE)) {
@@ -507,7 +504,7 @@ inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(GapBuf *gapbu
 	}
 
 	if (dst_pos->col_idx == 0 &&
-	    (dst_rune.value == '\n' || dst_rune.value == '\r' || gapbuf->lines[dst_pos->line_idx].size == 0)) {
+	    (dst_rune.value == '\n' || dst_rune.value == '\r' || buf->lines[dst_pos->line_idx].size == 0)) {
 		flags |= RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE;
 	}
 
@@ -516,7 +513,7 @@ inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(GapBuf *gapbu
 	}
 
 	if (dst_pos->col_idx == 0 &&
-	    (dst_rune.value == '\n' || dst_rune.value == '\r' || gapbuf->lines[dst_pos->line_idx].size == 0)) {
+	    (dst_rune.value == '\n' || dst_rune.value == '\r' || buf->lines[dst_pos->line_idx].size == 0)) {
 		flags |= RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE;
 	}
 
@@ -546,30 +543,16 @@ inline static RuneTransitionFlag rune_transition_get_flag(RuneTransitionFlags fl
 	return result;
 }
 
-inline static Rune gapbuf_get_rune(GapBuf *gapbuf, TxtPos pos)
-{
-	Rune rune = {};
-
-	if (gapbuf->lines[pos.line_idx].size > 0) {
-		ASSERT(pos.col_idx < gapbuf->lines[pos.line_idx].size);
-		size_t offset = gapbuf->lines[pos.line_idx].file_offset + pos.col_idx;
-		ASSERT(offset < gapbuf->buf_size);
-		rune.value = gapbuf->buf[offset];
-	}
-
-	return rune;
-}
-
-inline static TxtPos gapbuf_last_caretable_pos(GapBuf *txtbuf, size_t line_idx)
+inline static TxtPos txtbuf_last_caretable_pos(TxtBuf *buf, size_t line_idx)
 {
 	TxtPos result = { .line_idx = line_idx, .col_idx = 0 };
-	size_t line_size = txtbuf->lines[result.line_idx].size;
+	size_t line_size = buf->lines[result.line_idx].size;
 	if (line_size > 0) {
 		result.col_idx = line_size - 1;
 
 		while (result.col_idx > 0) {
-			Rune dst_rune = gapbuf_get_rune(txtbuf, result);
-			RuneFlags flags = gapbuf_get_rune_flags(txtbuf, &result, dst_rune);
+			Rune dst_rune = txtbuf_get_rune(buf, result);
+			RuneFlags flags = txtbuf_get_rune_flags(buf, &result, dst_rune);
 			if (!rune_get_flag(flags, RUNE_FLAG_CARETABLE)) {
 				--result.col_idx;
 			} else {
@@ -583,7 +566,18 @@ inline static TxtPos gapbuf_last_caretable_pos(GapBuf *txtbuf, size_t line_idx)
 	return result;
 }
 
+static void txtbuf_split(TxtBuf *buf)
+{
+}
+
+// Application initialization
+
 static void tix_init(Tix *tix)
 {
-	gapbuf_split(nullptr);
+	pool_init(&tix->lines_pool, tix->lines_buf, LINES_BUF_SIZE_MAX, sizeof(Line));
+
+	arena_init(&tix->renderer_arena, (size_t)RENDERER_BUFFER_SIZE, tix->renderer_buf);
+	arena_init(&tix->txtbufs_arena, TXTBUFS_BUF_SIZE_MAX, tix->txtbufs_buf);
+
+	tix->view.buf = &tix->txtbuf;
 }

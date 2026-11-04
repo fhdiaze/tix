@@ -365,23 +365,69 @@ typedef struct Block {
 } Block;
 
 typedef struct Pool {
-	void *buf;
+	unsigned char *buf;
 	size_t buf_size;
+	size_t offset;
 	size_t block_size;
-	Block *first_free;
+	Block *head;
 } Pool;
-
-typedef struct Stack {
-	void *buf;
-	size_t buf_size;
-} Stack;
 
 inline void pool_init(Pool *pool, void *buf, size_t buf_size, size_t block_size)
 {
-	pool->buf = buf;
-	pool->buf_size = buf_size;
-	pool->block_size = block_size;
-	pool->first_free = nullptr;
+	ASSERT(buf_size % block_size == 0);
+
+	*pool = (Pool){
+		.buf = buf,
+		.buf_size = buf_size,
+		.block_size = block_size,
+	};
+}
+
+inline uint32_t pool_is_full(Pool *pool)
+{
+	uint32_t result = pool->offset == pool->buf_size && !pool->head;
+
+	return result;
+}
+
+inline size_t pool_free_count(Pool *pool)
+{
+	size_t result = (pool->buf_size - pool->offset) / pool->block_size;
+
+	return result;
+}
+
+inline void *pool_push(Pool *pool)
+{
+	void *result = nullptr;
+
+	if (pool->head) {
+		result = pool->head;
+		pool->head = pool->head->next_free;
+	} else if (pool->offset < pool->buf_size) {
+		result = &pool->buf[pool->offset];
+		pool->offset += pool->block_size;
+	}
+
+	return result;
+}
+
+inline void *pool_push_zero(Pool *pool)
+{
+	void *result = pool_push(pool);
+	if (result) {
+		memset(result, 0, pool->block_size);
+	}
+
+	return result;
+}
+
+inline void pool_free(Pool *pool, unsigned char *block)
+{
+	Block *new_head = (Block *)block;
+	new_head->next_free = pool->head;
+
+	pool->head = new_head;
 }
 
 inline void arena_init(Arena *restrict arena, const size_t buf_size, unsigned char *const restrict buf)
