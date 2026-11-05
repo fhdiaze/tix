@@ -720,7 +720,11 @@ static unsigned long WINAPI render_run(void *param)
 			__m256i complex_mask = _mm256_set1_epi8((char)0x80);
 			size_t line_offset = 0;
 
-			while (!pool_is_full(&tix->lines_pool) && file_offset < tix->txtbuf.buf_size) {
+			while (file_offset < tix->txtbuf.file_size) {
+				if (!tix->txtbuf.chunk || tix->txtbuf.chunk->lines_count == LINECHUNK_LINES_COUNT_MAX) {
+					LineChunk *new_chunk = (LineChunk *)pool_push(&tix->linechunks_pool);
+					tix->txtbuf.chunk->next_idx =
+				}
 				Line *line = pool_push(&tix->lines_pool);
 				__m256i contains_complex = _mm256_setzero_si256();
 

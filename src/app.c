@@ -12,13 +12,15 @@
 #define PIXEL_SIZE 4
 #define FRAMEBUF_SIZE_MAX (7680 * 4320 * PIXEL_SIZE)
 #define TXTBUFS_BUF_SIZE_MAX GB_TO_BYTE(3ULL)
-#define LINES_PER_NOTCH 3
 #define POINTS_PER_INCH 72
 #define TILE_SIDE_PX_MAX 256
 #define TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * PIXEL_SIZE)
 #define KEY_STACK_COUNT_MAX 8
-#define LINES_COUNT_MAX 100000000
-#define LINES_BUF_SIZE_MAX (LINES_COUNT_MAX * sizeof(Line))
+#define LINES_PER_NOTCH 3
+#define LINECHUNKS_COUNT_MAX 100000
+#define LINECHUNK_LINES_COUNT_MAX 100
+#define FILECHUNKS_COUNT_MAX 1000
+#define FILECHUNK_SIZE_MAX 4096
 #define FILE_PATH_SIZE_MAX 4096
 #define RUNE_DIRECT_MIN 32  // SP (Space)
 #define RUNE_DIRECT_MAX 126 // ~ (Tilde)
@@ -252,11 +254,22 @@ typedef struct Tile {
 	uint32_t flags; // cursor/selection/etc., added in Stage 3
 } Tile;
 
+typedef struct FileChunk {
+	unsigned char buf[FILECHUNK_SIZE_MAX];
+	uint32_t size;
+} FileChunk;
+
 typedef struct Line {
 	size_t file_offset;
 	size_t size;
 	uint8_t contains_complex_chars;
 } Line;
+
+typedef struct LineChunk {
+	Line lines[LINECHUNK_LINES_COUNT_MAX];
+	uint32_t next_idx;
+	uint16_t lines_count;
+} LineChunk;
 
 typedef struct TxtPos {
 	size_t line_idx;
@@ -297,12 +310,9 @@ typedef struct FrameBuf {
 } FrameBuf;
 
 typedef struct TxtBuf {
-	size_t first_line;
+	LineChunk *chunk;
 	size_t lines_count;
-	size_t gap_offset;
-	size_t gap_size;
-	size_t buf_size;
-	unsigned char *buf;
+	size_t file_size;
 } TxtBuf;
 
 typedef struct RopeBuf {
@@ -329,10 +339,12 @@ typedef struct View {
 
 typedef struct Tix {
 	unsigned char renderer_buf[RENDERER_BUFFER_SIZE];
-	unsigned char txtbufs_buf[TXTBUFS_BUF_SIZE_MAX];
-	unsigned char lines_buf[LINES_BUF_SIZE_MAX];
+	FileChunk filechunks[FILECHUNKS_COUNT_MAX];
+	LineChunk linechunks[LINECHUNKS_COUNT_MAX];
 
-	Pool lines_pool;
+	Pool linechunks_pool;
+	Pool filechunks_pool;
+
 	Arena renderer_arena;
 	Arena txtbufs_arena;
 
@@ -418,7 +430,17 @@ inline static TxtPos txtbuf_next_pos(const TxtBuf *const buf, const TxtPos pos)
 	return result;
 }
 
-// Runes
+inline static Line *txtbuf_get_line(Tix *tix, const TxtBuf *const buf, const size_t line_idx)
+{
+	size_t buf_line_idx = buf->first_line;
+	Line *result = &tix->lines_buf[buf_line_idx];
+
+	for (size_t i = 0; i < buf->lines_count && i <= line_idx; ++i) {
+		buf_line_idx = result->
+	}
+
+	return result;
+}
 
 inline static Rune txtbuf_get_rune(TxtBuf *buf, TxtPos pos)
 {
@@ -470,6 +492,10 @@ static RuneFlags txtbuf_get_rune_flags(TxtBuf *buf, TxtPos *pos, Rune rune)
 	}
 
 	return rune_flags;
+}
+
+static void txtbuf_next_rune(TxtBuf *buf, TxtPos pos)
+{
 }
 
 inline static RuneFlag rune_get_flag(RuneFlags flags, RuneFlag flag)
@@ -574,10 +600,10 @@ static void txtbuf_split(TxtBuf *buf)
 
 static void tix_init(Tix *tix)
 {
-	pool_init(&tix->lines_pool, tix->lines_buf, LINES_BUF_SIZE_MAX, sizeof(Line));
+	pool_init(&tix->linechunks_pool, tix->linechunks, sizeof(tix->linechunks), sizeof(LineChunk));
+	pool_init(&tix->filechunks_pool, tix->filechunks, sizeof(tix->filechunks), sizeof(FileChunk));
 
 	arena_init(&tix->renderer_arena, (size_t)RENDERER_BUFFER_SIZE, tix->renderer_buf);
-	arena_init(&tix->txtbufs_arena, TXTBUFS_BUF_SIZE_MAX, tix->txtbufs_buf);
 
 	tix->view.buf = &tix->txtbuf;
 }
