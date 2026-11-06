@@ -326,22 +326,77 @@ static LRESULT CALLBACK window_procedure(HWND win_handle, UINT msg, WPARAM wpara
 	return result;
 }
 
-static inline uint32_t file_get_last_write_time(const char *const file_path, FILETIME *result)
+ErrCode sys_file_get_last_write_time(const char *const file_path, size_t *result)
 {
 	WIN32_FILE_ATTRIBUTE_DATA data;
 	if (!GetFileAttributesExA(file_path, GetFileExInfoStandard, &data)) {
 		LOG_ERROR("unable to check the timestamp of the file: %s", file_path);
-		return 0U;
+		return ERR_CODE_FAILED;
 	}
 
-	*result = data.ftLastWriteTime;
+	*result = data.ftLastWriteTime.dwHighDateTime << sizeof(WORD) * CHAR_BIT | data.ftLastWriteTime.dwLowDateTime;
 
-	return 1U;
+	return ERR_CODE_NONE;
 }
 
-static MemBuf sys_file_read_gap(Arena *arena, const char *const path, size_t gap_size)
+ErrCode sys_file_read_chunk(const char *const path, MemBuf *mem, uint32_t chunk_size)
 {
-	MemBuf result = {};
+	ErrCode result = {};
+
+	ASSERT(mem);
+	ASSERT(mem->size_max);
+	ASSERT(!mem->size);
+	ASSERT(mem->size_max >= chunk_size);
+
+	HANDLE handle =
+		CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (handle != INVALID_HANDLE_VALUE) {
+		DWORD read_size = chunk_size;
+		if (ReadFile(handle, mem->buf, chunk_size, &read_size, nullptr) && read_size <= chunk_size) {
+			mem->size = read_size;
+		} else {
+			LOG_ERROR("failed to read the file: %s", path);
+			ASSERT(false && "failed to read the file");
+		}
+
+		CloseHandle(handle);
+	} else {
+		ASSERT(false && "failed to open the file");
+		LOG_ERROR("failed to open the file: %s", path);
+	}
+
+	return result;
+}
+
+ErrCode sys_file_get_size(const char *const path, size_t *result)
+{
+	ErrCode error = {};
+
+	HANDLE handle =
+		CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (handle != INVALID_HANDLE_VALUE) {
+		LARGE_INTEGER filesize_struct;
+
+		if (GetFileSizeEx(handle, &filesize_struct)) {
+			*result = (size_t)(filesize_struct.QuadPart);
+		} else {
+			ASSERT(false && "failed to get the size of the file");
+			LOG_ERROR("failed to get the size of the file: %s", path);
+		}
+
+		CloseHandle(handle);
+	} else {
+		ASSERT(false && "failed to open the file");
+		LOG_ERROR("failed to open the file: %s", path);
+		error = ERR_CODE_FAILED;
+	}
+
+	return error;
+}
+
+ErrCode sys_file_read(const char *const path, Arena *arena, MemBuf *result)
+{
+	ErrCode error = {};
 
 	HANDLE handle =
 		CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -350,104 +405,39 @@ static MemBuf sys_file_read_gap(Arena *arena, const char *const path, size_t gap
 		if (GetFileSizeEx(handle, &filesize_struct)) {
 			uint32_t file_size = (uint32_t)(filesize_struct.QuadPart);
 			ArenaMark mark = arena_mark(arena);
-			result.buf = arena_push_zero(arena, file_size + gap_size);
+			result->buf = arena_push_zero(arena, file_size);
 
-			if (result.buf) {
+			if (result->buf) {
 				DWORD read_size = 0;
-				if (ReadFile(handle, result.buf, file_size, &read_size, nullptr) && read_size == file_size) {
-					result.size = file_size + gap_size;
+				if (ReadFile(handle, result->buf, file_size, &read_size, nullptr) && read_size == file_size) {
+					result->size = read_size;
+					result->size_max = read_size;
 				} else {
 					LOG_ERROR("failed to read the file: %s", path);
-
 					arena_rewind(&mark);
-
-					result = (MemBuf){};
+					ASSERT(false && "failed to read the content of file");
+					error = ERR_CODE_FAILED;
 				}
 			} else {
 				ASSERT(false && "failed to allocate memory for the content of file");
 				// TODO(fredy): if the file is too big, use file mapping?
 				LOG_ERROR("failed to allocate memory for the content of file: %s", path);
+				error = ERR_CODE_FAILED;
 			}
 		} else {
 			ASSERT(false && "failed to get the size of the file");
 			LOG_ERROR("failed to get the size of the file: %s", path);
+			error = ERR_CODE_FAILED;
 		}
 
 		CloseHandle(handle);
 	} else {
 		ASSERT(false && "failed to open the file");
 		LOG_ERROR("failed to open the file: %s", path);
+		error = ERR_CODE_FAILED;
 	}
 
-	return result;
-}
-
-size_t sys_file_get_size(const char *const path)
-{
-	size_t result = {};
-
-	HANDLE handle =
-		CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (handle != INVALID_HANDLE_VALUE) {
-		LARGE_INTEGER filesize_struct;
-
-		if (GetFileSizeEx(handle, &filesize_struct)) {
-			result = (size_t)(filesize_struct.QuadPart);
-		} else {
-			ASSERT(false && "failed to get the size of the file");
-			LOG_ERROR("failed to get the size of the file: %s", path);
-		}
-
-		CloseHandle(handle);
-	} else {
-		ASSERT(false && "failed to open the file");
-		LOG_ERROR("failed to open the file: %s", path);
-	}
-
-	return result;
-}
-
-MemBuf sys_file_read(Arena *arena, const char *const path)
-{
-	MemBuf result = {};
-
-	HANDLE handle =
-		CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-	if (handle != INVALID_HANDLE_VALUE) {
-		LARGE_INTEGER filesize_struct;
-		if (GetFileSizeEx(handle, &filesize_struct)) {
-			uint32_t file_size = (uint32_t)(filesize_struct.QuadPart);
-			ArenaMark mark = arena_mark(arena);
-			result.buf = arena_push_zero(arena, file_size);
-
-			if (result.buf) {
-				DWORD read_size = 0;
-				if (ReadFile(handle, result.buf, file_size, &read_size, nullptr) && read_size == file_size) {
-					result.size = read_size;
-				} else {
-					LOG_ERROR("failed to read the file: %s", path);
-
-					arena_rewind(&mark);
-
-					result = (MemBuf){};
-				}
-			} else {
-				ASSERT(false && "failed to allocate memory for the content of file");
-				// TODO(fredy): if the file is too big, use file mapping?
-				LOG_ERROR("failed to allocate memory for the content of file: %s", path);
-			}
-		} else {
-			ASSERT(false && "failed to get the size of the file");
-			LOG_ERROR("failed to get the size of the file: %s", path);
-		}
-
-		CloseHandle(handle);
-	} else {
-		ASSERT(false && "failed to open the file");
-		LOG_ERROR("failed to open the file: %s", path);
-	}
-
-	return result;
+	return error;
 }
 
 inline static void keyboard_process_message(KeyState *key_state, uint32_t was_down, uint32_t is_down)
@@ -662,44 +652,17 @@ static unsigned long WINAPI render_run(void *param)
 		// Update buffers
 		// =============================================================================
 		uint32_t was_file_updated = 0U;
-		FILETIME current_write_time = {};
-		if (!tix->txtbuf.buf) {
-			MemBuf membuf = sys_file_read(&tix->txtbufs_arena, file_path);
-
-			if (tix->txtbuf.buf) {
-				file_get_last_write_time(file_path, &file_previous_write_time);
-				was_file_updated = TRUE;
-
-				tix->txtbuf.buf = membuf.buf;
-				tix->txtbuf.buf_size = membuf.size;
-				tix->txtbuf.gap_offset = 0;
-				tix->txtbuf.gap_size = 0;
-				tix->txtbuf.lines_count = 0;
-			} else {
-				LOG_ERROR("The file %s could not be opened", file_path);
-			}
-		} else if (file_get_last_write_time(file_path, &current_write_time)) {
-			if (CompareFileTime(&current_write_time, &file_previous_write_time) > 0) {
-				if (tix->txtbuf.buf) {
-					arena_pop(&tix->txtbufs_arena, tix->txtbuf.buf_size);
+		size_t current_write_time = {};
+		if (!tix->txtbuf.file.buf) {
+			txtbuf_read_file(&tix->txtbuf, tix, file_path);
+		} else if (sys_file_get_last_write_time(file_path, &current_write_time)) {
+			if (current_write_time > tix->txtbuf.file_time) {
+				if (tix->txtbuf.file.buf) {
+					arena_pop(&tix->files_arena, tix->txtbuf.file.size_max);
 					tix->txtbuf = (TxtBuf){};
 				}
 
-				tix->txtbuf.lines_count = 0;
-				MemBuf membuf = sys_file_read_gap(&tix->txtbufs_arena, file_path, 1000);
-
-				if (tix->txtbuf.buf) {
-					was_file_updated = TRUE;
-					file_previous_write_time = current_write_time;
-
-					tix->txtbuf.buf = membuf.buf;
-					tix->txtbuf.buf_size = membuf.size;
-					tix->txtbuf.gap_offset = 0;
-					tix->txtbuf.gap_size = 0;
-					tix->txtbuf.lines_count = 0;
-				} else {
-					LOG_ERROR("The file %s could not be opened", file_path);
-				}
+				txtbuf_read_file(&tix->txtbuf, tix, file_path);
 			}
 		}
 
@@ -720,16 +683,17 @@ static unsigned long WINAPI render_run(void *param)
 			__m256i complex_mask = _mm256_set1_epi8((char)0x80);
 			size_t line_offset = 0;
 
-			while (file_offset < tix->txtbuf.file_size) {
-				if (!tix->txtbuf.chunk || tix->txtbuf.chunk->lines_count == LINECHUNK_LINES_COUNT_MAX) {
-					LineChunk *new_chunk = (LineChunk *)pool_push(&tix->linechunks_pool);
-					tix->txtbuf.chunk->next_idx =
+			while (file_offset < tix->txtbuf.file.size) {
+				if (pool_is_full(&tix->lines_pool)) {
+					ASSERT(false && "No room for more lines");
+					break;
 				}
+
 				Line *line = pool_push(&tix->lines_pool);
 				__m256i contains_complex = _mm256_setzero_si256();
 
-				while (file_offset + 32 < tix->txtbuf.buf_size) {
-					__m256i batch = _mm256_loadu_si256((__m256i *)((tix->txtbuf.buf) + file_offset));
+				while (file_offset + 32 < tix->txtbuf.file.size) {
+					__m256i batch = _mm256_loadu_si256((__m256i *)((tix->txtbuf.file.buf) + file_offset));
 
 					__m256i test_newline = _mm256_cmpeq_epi8(batch, newline_needle);
 					__m256i test_complex = _mm256_and_si256(batch, complex_mask);
@@ -758,9 +722,9 @@ static unsigned long WINAPI render_run(void *param)
 					file_offset += 32;
 				}
 
-				ASSERT(file_offset < tix->txtbuf.buf_size);
-				uint32_t is_newline = ((char *)(tix->txtbuf.buf))[file_offset] == '\n';
-				uint32_t is_last_byte = file_offset + 1 == tix->txtbuf.buf_size;
+				ASSERT(file_offset < tix->txtbuf.file.size);
+				uint32_t is_newline = ((char *)(tix->txtbuf.file.buf))[file_offset] == '\n';
+				uint32_t is_last_byte = file_offset + 1 == tix->txtbuf.file.size;
 				if (is_newline || is_last_byte) {
 					ASSERT(tix->txtbuf.lines_count < LINES_COUNT_MAX);
 
@@ -776,7 +740,7 @@ static unsigned long WINAPI render_run(void *param)
 						line->size = 0;
 						++tix->txtbuf.lines_count;
 					}
-				} else if (((char *)(tix->txtbuf.buf))[file_offset] < 0) {
+				} else if (((char *)(tix->txtbuf.file.buf))[file_offset] < 0) {
 					line->contains_complex_chars = 1U;
 				}
 
@@ -970,9 +934,9 @@ static unsigned long WINAPI render_run(void *param)
 			tix->view.caret.wanted_col_idx = tix->view.caret.pos.col_idx;
 		}
 
-		size_t caret_line_size = tix->txtbuf.lines[tix->view.caret.pos.line_idx].size;
+		Line *caret_line = txtbuf_get_line(&tix->txtbuf, tix->view.caret.pos.line_idx);
 		if (tix_input.keys[KEY_CODE_L].ended_down) {
-			if (tix->view.caret.pos.col_idx + 1 < caret_line_size) {
+			if (tix->view.caret.pos.col_idx + 1 < caret_line->size) {
 				TxtPos dst_pos = txtbuf_next_pos(&tix->txtbuf, tix->view.caret.pos);
 				Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos);
 				RuneFlags flags = txtbuf_get_rune_flags(&tix->txtbuf, &dst_pos, dst_rune);
@@ -985,10 +949,10 @@ static unsigned long WINAPI render_run(void *param)
 
 		if (tix_input.keys[KEY_CODE_LOWBAR].ended_down) {
 			size_t char_col_idx = 0;
-			char *file_chars = (char *)tix->txtbuf.buf;
-			while (char_col_idx < caret_line_size) {
-				size_t offset = tix->txtbuf.lines[tix->view.caret.pos.line_idx].file_offset + char_col_idx;
-				ASSERT(offset < tix->txtbuf.buf_size);
+			char *file_chars = (char *)tix->txtbuf.file.buf;
+			while (char_col_idx < caret_line->size) {
+				size_t offset = caret_line->file_offset + char_col_idx;
+				ASSERT(offset < tix->txtbuf.file.size);
 				char file_char = file_chars[offset];
 				if (file_char > RUNE_DIRECT_MIN && file_char <= RUNE_DIRECT_MAX) {
 					tix->view.caret.wanted_col_idx = char_col_idx;
@@ -1021,7 +985,7 @@ static unsigned long WINAPI render_run(void *param)
 				}
 			}
 
-			if (tix->view.caret.wanted_col_idx > caret_line_size) {
+			if (tix->view.caret.wanted_col_idx > caret_line->size) {
 				tix->view.caret.pos = txtbuf_last_caretable_pos(&tix->txtbuf, tix->view.caret.pos.line_idx);
 			} else {
 				tix->view.caret.pos.col_idx = tix->view.caret.wanted_col_idx;
@@ -1052,9 +1016,9 @@ static unsigned long WINAPI render_run(void *param)
 		uint32_t fg_color = FG_COLOR;
 		for (unsigned tile_idx_y = 0; tix->grid.tile_height_px * tile_idx_y < tix->framebuf.height_px; ++tile_idx_y) {
 			size_t line_idx = tix->view.scroll_idx + tile_idx_y;
-			size_t line_size = 0;
+			Line *line = {};
 			if (line_idx < tix->txtbuf.lines_count) {
-				line_size = tix->txtbuf.lines[line_idx].size;
+				line = txtbuf_get_line(&tix->txtbuf, line_idx);
 			}
 			unsigned tile_min_y_px = tix->grid.tile_height_px * tile_idx_y;
 			AtlasIdx atlas_idx = {};
@@ -1062,7 +1026,7 @@ static unsigned long WINAPI render_run(void *param)
 			// =============================================================================
 			// Shaping
 			// =============================================================================
-			if (tix->txtbuf.lines[line_idx].contains_complex_chars) {
+			if (line->contains_complex_chars) {
 				// Sometimes multiple runes are merged into one grapheme
 			}
 
@@ -1074,10 +1038,10 @@ static unsigned long WINAPI render_run(void *param)
 				char tile_char = ' ';
 				uint32_t tile_min_x_px = tile_idx_x * tix->grid.tile_width_px;
 
-				if (tile_idx_x < line_size) {
-					char *file_chars = (char *)tix->txtbuf.buf;
-					size_t offset = tix->txtbuf.lines[line_idx].file_offset + tile_idx_x;
-					ASSERT(offset < tix->txtbuf.buf_size);
+				if (tile_idx_x < line->size) {
+					char *file_chars = (char *)tix->txtbuf.file.buf;
+					size_t offset = line->file_offset + tile_idx_x;
+					ASSERT(offset < tix->txtbuf.file.size);
 					char file_char = file_chars[offset];
 
 					if (file_char >= RUNE_DIRECT_MIN && file_char <= RUNE_DIRECT_MAX) {

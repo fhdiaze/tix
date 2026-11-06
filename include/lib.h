@@ -345,8 +345,9 @@ inline Vtwo vtwo_normalize(Vtwo a)
 #define ARENA_PUSH_STRUCT_ZERO(arena, type) (type *)arena_push_zero((arena), sizeof(type))
 
 typedef struct MemBuf {
-	void *buf;
+	unsigned char *buf;
 	size_t size;
+	size_t size_max;
 } MemBuf;
 
 typedef struct Arena {
@@ -371,62 +372,6 @@ typedef struct Pool {
 	size_t block_size;
 	Block *head;
 } Pool;
-
-typedef struct Slots {
-	uint32_t free_list[100];
-	uint32_t count_max;
-	uint32_t count;
-	uint32_t free_idx;
-} Slots;
-
-// 0 is the NULL slot
-inline void slots_init(Slots *slots, uint32_t count_max)
-{
-	*slots = (Slots){
-		.count = 1,
-		.count_max = count_max,
-	};
-}
-
-inline uint32_t slots_is_full(Slots *slots)
-{
-	uint32_t result = slots->count == slots->count_max && slots->free_idx == 0;
-
-	return result;
-}
-
-inline uint32_t slots_push(Slots *slots)
-{
-	uint32_t result = 0;
-
-	if (slots->free_idx) {
-		result = slots->free_idx;
-		slots->free_idx = slots->head->next_free;
-	} else if (slots->offset < slots->buf_size) {
-		result = &slots->buf[slots->offset];
-		slots->offset += slots->block_size;
-	}
-
-	return result;
-}
-
-inline void *slots_push_zero(Slots *slots)
-{
-	void *result = pool_push(pool);
-	if (result) {
-		memset(result, 0, slots->block_size);
-	}
-
-	return result;
-}
-
-inline void slots_free(Slots *slots, uint32_t slot_idx)
-{
-	Block *new_head = (Block *)block;
-	new_head->next_free = slots->head;
-
-	slots->head = new_head;
-}
 
 inline void pool_init(Pool *pool, void *buf, size_t buf_size, size_t block_size)
 {

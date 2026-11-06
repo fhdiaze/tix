@@ -1,3 +1,4 @@
+#include "sys.h"
 #include <stdint.h>
 
 #include "lib.h"
@@ -11,16 +12,13 @@
 #define CARET_WANTED_COL_IDX_END SIZE_MAX
 #define PIXEL_SIZE 4
 #define FRAMEBUF_SIZE_MAX (7680 * 4320 * PIXEL_SIZE)
-#define TXTBUFS_BUF_SIZE_MAX GB_TO_BYTE(3ULL)
+#define FILES_BUF_SIZE_MAX GB_TO_BYTE(1ULL)
 #define POINTS_PER_INCH 72
 #define TILE_SIDE_PX_MAX 256
 #define TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * PIXEL_SIZE)
 #define KEY_STACK_COUNT_MAX 8
 #define LINES_PER_NOTCH 3
-#define LINECHUNKS_COUNT_MAX 100000
-#define LINECHUNK_LINES_COUNT_MAX 100
-#define FILECHUNKS_COUNT_MAX 1000
-#define FILECHUNK_SIZE_MAX 4096
+#define LINES_COUNT_MAX 2000000
 #define FILE_PATH_SIZE_MAX 4096
 #define RUNE_DIRECT_MIN 32  // SP (Space)
 #define RUNE_DIRECT_MAX 126 // ~ (Tilde)
@@ -28,7 +26,7 @@
 #define RUNE_IS_DIRECT(c) (c >= RUNE_DIRECT_MIN && c <= RUNE_DIRECT_MAX)
 #define ATLAS_PIXEL_SIZE 1
 #define ATLAS_TILE_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE)
-#define RENDERER_BUFFER_SIZE (ATLAS_TILE_SIZE_MAX * 20)
+#define RENDERER_BUF_SIZE_MAX (ATLAS_TILE_SIZE_MAX * 20)
 #define ATLAS_BUF_SIZE_MAX (TILE_SIDE_PX_MAX * TILE_SIDE_PX_MAX * ATLAS_PIXEL_SIZE * RUNE_DIRECT_COUNT)
 
 typedef uint32_t RuneTransitionFlags;
@@ -254,22 +252,13 @@ typedef struct Tile {
 	uint32_t flags; // cursor/selection/etc., added in Stage 3
 } Tile;
 
-typedef struct FileChunk {
-	unsigned char buf[FILECHUNK_SIZE_MAX];
-	uint32_t size;
-} FileChunk;
-
+typedef struct Line Line;
 typedef struct Line {
+	Line *next;
 	size_t file_offset;
 	size_t size;
 	uint8_t contains_complex_chars;
 } Line;
-
-typedef struct LineChunk {
-	Line lines[LINECHUNK_LINES_COUNT_MAX];
-	uint32_t next_idx;
-	uint16_t lines_count;
-} LineChunk;
 
 typedef struct TxtPos {
 	size_t line_idx;
@@ -310,9 +299,11 @@ typedef struct FrameBuf {
 } FrameBuf;
 
 typedef struct TxtBuf {
-	LineChunk *chunk;
 	size_t lines_count;
-	size_t file_size;
+	MemBuf file;
+	size_t file_time;
+	Line *head;
+	Line *tail;
 } TxtBuf;
 
 typedef struct RopeBuf {
@@ -338,15 +329,14 @@ typedef struct View {
 } View;
 
 typedef struct Tix {
-	unsigned char renderer_buf[RENDERER_BUFFER_SIZE];
-	FileChunk filechunks[FILECHUNKS_COUNT_MAX];
-	LineChunk linechunks[LINECHUNKS_COUNT_MAX];
+	unsigned char renderer_buf[RENDERER_BUF_SIZE_MAX];
+	unsigned char files_buf[FILES_BUF_SIZE_MAX];
+	Line lines_buf[LINES_COUNT_MAX];
 
-	Pool linechunks_pool;
-	Pool filechunks_pool;
+	Pool lines_pool;
 
 	Arena renderer_arena;
-	Arena txtbufs_arena;
+	Arena files_arena;
 
 	Atlas atlas;
 	FrameBuf framebuf;
@@ -399,6 +389,17 @@ inline static uint32_t txtpos_are_equal(const TxtPos *const one, const TxtPos *c
 	return result;
 }
 
+inline static Line *txtbuf_get_line(const TxtBuf *const buf, const size_t line_idx)
+{
+	Line *result = buf->head;
+
+	for (size_t i = 0; i < buf->lines_count && i <= line_idx; ++i) {
+		result = result->next;
+	}
+
+	return result;
+}
+
 inline static TxtPos txtbuf_prev_pos(TxtBuf *buf, TxtPos pos)
 {
 	TxtPos prev_pos = pos;
@@ -407,8 +408,9 @@ inline static TxtPos txtbuf_prev_pos(TxtBuf *buf, TxtPos pos)
 		--prev_pos.col_idx;
 	} else if (prev_pos.line_idx > 0) {
 		--prev_pos.line_idx;
-		ASSERT(buf->lines[prev_pos.line_idx].size > 0);
-		prev_pos.col_idx = buf->lines[prev_pos.line_idx].size - 1;
+		Line *prev_line = txtbuf_get_line(buf, prev_pos.line_idx);
+		ASSERT(prev_line->size > 0);
+		prev_pos.col_idx = prev_line->size - 1;
 	}
 
 	return prev_pos;
@@ -418,8 +420,10 @@ inline static TxtPos txtbuf_next_pos(const TxtBuf *const buf, const TxtPos pos)
 {
 	TxtPos result = pos;
 
+	Line *line = txtbuf_get_line(buf, pos.line_idx);
+	ASSERT(line);
 	if (pos.line_idx < buf->lines_count) {
-		if (pos.col_idx + 1 < buf->lines[pos.line_idx].size) {
+		if (pos.col_idx + 1 < line->size) {
 			++result.col_idx;
 		} else if (pos.line_idx + 1 < buf->lines_count) {
 			++result.line_idx;
@@ -430,44 +434,52 @@ inline static TxtPos txtbuf_next_pos(const TxtBuf *const buf, const TxtPos pos)
 	return result;
 }
 
-inline static Line *txtbuf_get_line(Tix *tix, const TxtBuf *const buf, const size_t line_idx)
+inline static Line *txtbuf_push_line(Tix *tix, TxtBuf *buf)
 {
-	size_t buf_line_idx = buf->first_line;
-	Line *result = &tix->lines_buf[buf_line_idx];
+	Line *result = pool_push_zero(&tix->lines_pool);
 
-	for (size_t i = 0; i < buf->lines_count && i <= line_idx; ++i) {
-		buf_line_idx = result->
+	if (buf->tail) {
+		buf->tail->next = result;
+		buf->tail = result;
+	} else {
+		buf->head = result;
+		buf->tail = result;
 	}
+	++buf->lines_count;
 
 	return result;
 }
 
 inline static Rune txtbuf_get_rune(TxtBuf *buf, TxtPos pos)
 {
-	Rune rune = {};
+	Rune result = {};
 
-	if (buf->lines[pos.line_idx].size > 0) {
-		ASSERT(pos.col_idx < buf->lines[pos.line_idx].size);
-		size_t offset = buf->lines[pos.line_idx].file_offset + pos.col_idx;
-		ASSERT(offset < buf->buf_size);
-		rune.value = buf->buf[offset];
+	Line *line = txtbuf_get_line(buf, pos.line_idx);
+
+	if (line && line->size > 0) {
+		ASSERT(pos.col_idx < line->size);
+		size_t offset = line->file_offset + pos.col_idx;
+		ASSERT(offset < buf->file.size);
+		result.value = buf->file.buf[offset];
 	}
 
-	return rune;
+	return result;
 }
 
 static RuneFlags txtbuf_get_rune_flags(TxtBuf *buf, TxtPos *pos, Rune rune)
 {
 	RuneFlags rune_flags = {};
 
+	Line *line = txtbuf_get_line(buf, pos->line_idx);
+	ASSERT(line);
 	if (rune.value == '\n') {
 		rune_flags |= RUNE_FLAG_BLANK;
-		if (buf->lines[pos->line_idx].size == 1 && pos->col_idx == 0) {
+		if (line->size == 1 && pos->col_idx == 0) {
 			rune_flags |= RUNE_FLAG_CARETABLE;
 		}
 	} else if (rune.value == '\r') {
 		rune_flags |= RUNE_FLAG_BLANK;
-		if (buf->lines[pos->line_idx].size == 2 && pos->col_idx == 0) {
+		if (line->size == 2 && pos->col_idx == 0) {
 			// NOTE(fredy): assuming the last byte is '\n'
 			rune_flags |= RUNE_FLAG_CARETABLE;
 		}
@@ -529,8 +541,9 @@ inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(TxtBuf *buf, 
 		}
 	}
 
-	if (dst_pos->col_idx == 0 &&
-	    (dst_rune.value == '\n' || dst_rune.value == '\r' || buf->lines[dst_pos->line_idx].size == 0)) {
+	Line *dst_line = txtbuf_get_line(buf, dst_pos->line_idx);
+	ASSERT(dst_line);
+	if (dst_pos->col_idx == 0 && (dst_rune.value == '\n' || dst_rune.value == '\r' || dst_line->size == 0)) {
 		flags |= RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE;
 	}
 
@@ -538,8 +551,7 @@ inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(TxtBuf *buf, 
 		flags |= RUNE_TRANSITION_FLAG_ANY_TO_NONBLANK;
 	}
 
-	if (dst_pos->col_idx == 0 &&
-	    (dst_rune.value == '\n' || dst_rune.value == '\r' || buf->lines[dst_pos->line_idx].size == 0)) {
+	if (dst_pos->col_idx == 0 && (dst_rune.value == '\n' || dst_rune.value == '\r' || dst_line->size == 0)) {
 		flags |= RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE;
 	}
 
@@ -572,7 +584,9 @@ inline static RuneTransitionFlag rune_transition_get_flag(RuneTransitionFlags fl
 inline static TxtPos txtbuf_last_caretable_pos(TxtBuf *buf, size_t line_idx)
 {
 	TxtPos result = { .line_idx = line_idx, .col_idx = 0 };
-	size_t line_size = buf->lines[result.line_idx].size;
+	Line *line = txtbuf_get_line(buf, line_idx);
+	ASSERT(line);
+	size_t line_size = line->size;
 	if (line_size > 0) {
 		result.col_idx = line_size - 1;
 
@@ -592,18 +606,26 @@ inline static TxtPos txtbuf_last_caretable_pos(TxtBuf *buf, size_t line_idx)
 	return result;
 }
 
-static void txtbuf_split(TxtBuf *buf)
+static ErrCode txtbuf_read_file(TxtBuf *buf, Tix *tix, const char *const path)
 {
-}
+	ErrCode error = sys_file_read(path, &tix->files_arena, &buf->file);
 
-// Application initialization
+	if (!error) {
+		error = sys_file_get_last_write_time(path, &tix->txtbuf.file_time);
+	} else {
+		LOG_ERROR("The file %s could not be opened", path);
+		ASSERT(false && "Failed to read the file");
+	}
+
+	return error;
+}
 
 static void tix_init(Tix *tix)
 {
-	pool_init(&tix->linechunks_pool, tix->linechunks, sizeof(tix->linechunks), sizeof(LineChunk));
-	pool_init(&tix->filechunks_pool, tix->filechunks, sizeof(tix->filechunks), sizeof(FileChunk));
+	pool_init(&tix->lines_pool, tix->lines_buf, sizeof(tix->lines_buf), sizeof(Line));
 
-	arena_init(&tix->renderer_arena, (size_t)RENDERER_BUFFER_SIZE, tix->renderer_buf);
+	arena_init(&tix->files_arena, sizeof(tix->files_buf), tix->files_buf);
+	arena_init(&tix->renderer_arena, sizeof(tix->renderer_buf), tix->renderer_buf);
 
 	tix->view.buf = &tix->txtbuf;
 }
