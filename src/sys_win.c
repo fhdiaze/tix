@@ -339,21 +339,21 @@ ErrCode sys_file_get_last_write_time(const char *const file_path, size_t *result
 	return ERR_CODE_NONE;
 }
 
-ErrCode sys_file_read_chunk(const char *const path, MemBuf *mem, uint32_t chunk_size)
+ErrCode sys_file_read_chunk(const char *const path, uint32_t chunk_size, MemBuf *result)
 {
-	ErrCode result = {};
+	ErrCode error = {};
 
-	ASSERT(mem);
-	ASSERT(mem->size_max);
-	ASSERT(!mem->size);
-	ASSERT(mem->size_max >= chunk_size);
+	ASSERT(result);
+	ASSERT(result->size_max);
+	ASSERT(!result->size);
+	ASSERT(result->size_max >= chunk_size);
 
 	HANDLE handle =
 		CreateFileA(path, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (handle != INVALID_HANDLE_VALUE) {
 		DWORD read_size = chunk_size;
-		if (ReadFile(handle, mem->buf, chunk_size, &read_size, nullptr) && read_size <= chunk_size) {
-			mem->size = read_size;
+		if (ReadFile(handle, result->buf, chunk_size, &read_size, nullptr) && read_size <= chunk_size) {
+			result->size = read_size;
 		} else {
 			LOG_ERROR("failed to read the file: %s", path);
 			ASSERT(false && "failed to read the file");
@@ -365,7 +365,7 @@ ErrCode sys_file_read_chunk(const char *const path, MemBuf *mem, uint32_t chunk_
 		LOG_ERROR("failed to open the file: %s", path);
 	}
 
-	return result;
+	return error;
 }
 
 ErrCode sys_file_get_size(const char *const path, size_t *result)
@@ -651,10 +651,10 @@ static unsigned long WINAPI render_run(void *param)
 		// =============================================================================
 		// Update buffers
 		// =============================================================================
-		uint32_t was_file_updated = 0U;
 		size_t current_write_time = {};
 		if (!tix->txtbuf.file.buf) {
 			txtbuf_read_file(&tix->txtbuf, tix, file_path);
+			txtbuf_index_lines(&tix->txtbuf, tix);
 		} else if (sys_file_get_last_write_time(file_path, &current_write_time)) {
 			if (current_write_time > tix->txtbuf.file_time) {
 				if (tix->txtbuf.file.buf) {
@@ -663,88 +663,7 @@ static unsigned long WINAPI render_run(void *param)
 				}
 
 				txtbuf_read_file(&tix->txtbuf, tix, file_path);
-			}
-		}
-
-		if (was_file_updated) {
-			tix->txtbuf.lines_count = 0;
-
-			// TODO(fredy): should it be a circular buffer?
-			static uint8_t overhang_mask[64] = {
-				255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-				255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
-				0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-				0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
-			};
-
-			size_t file_offset = 0;
-
-			__m256i newline_needle = _mm256_set1_epi8('\n');
-			__m256i complex_mask = _mm256_set1_epi8((char)0x80);
-			size_t line_offset = 0;
-
-			while (file_offset < tix->txtbuf.file.size) {
-				if (pool_is_full(&tix->lines_pool)) {
-					ASSERT(false && "No room for more lines");
-					break;
-				}
-
-				Line *line = pool_push(&tix->lines_pool);
-				__m256i contains_complex = _mm256_setzero_si256();
-
-				while (file_offset + 32 < tix->txtbuf.file.size) {
-					__m256i batch = _mm256_loadu_si256((__m256i *)((tix->txtbuf.file.buf) + file_offset));
-
-					__m256i test_newline = _mm256_cmpeq_epi8(batch, newline_needle);
-					__m256i test_complex = _mm256_and_si256(batch, complex_mask);
-
-					uint32_t newline_detected = (uint32_t)_mm256_movemask_epi8(test_newline);
-
-					if (newline_detected) {
-						uint32_t first_newline_idx = 0;
-						uint_ctz(newline_detected, &first_newline_idx);
-
-						__m256i mask_complex = _mm256_loadu_si256((__m256i *)(overhang_mask + 32 - first_newline_idx));
-
-						test_complex = _mm256_and_si256(test_complex, mask_complex);
-						contains_complex = _mm256_or_si256(contains_complex, test_complex);
-
-						line->contains_complex_chars |=
-							(uint8_t)!_mm256_testz_si256(contains_complex, contains_complex);
-
-						file_offset += first_newline_idx;
-
-						break;
-					}
-
-					contains_complex = _mm256_or_si256(contains_complex, test_complex);
-
-					file_offset += 32;
-				}
-
-				ASSERT(file_offset < tix->txtbuf.file.size);
-				uint32_t is_newline = ((char *)(tix->txtbuf.file.buf))[file_offset] == '\n';
-				uint32_t is_last_byte = file_offset + 1 == tix->txtbuf.file.size;
-				if (is_newline || is_last_byte) {
-					ASSERT(tix->txtbuf.lines_count < LINES_COUNT_MAX);
-
-					line->file_offset = line_offset;
-					line->size = file_offset ? file_offset - line_offset + 1 : 0;
-
-					line_offset = file_offset + 1;
-
-					++tix->txtbuf.lines_count;
-
-					if (is_newline && is_last_byte) {
-						line->file_offset = line_offset;
-						line->size = 0;
-						++tix->txtbuf.lines_count;
-					}
-				} else if (((char *)(tix->txtbuf.file.buf))[file_offset] < 0) {
-					line->contains_complex_chars = 1U;
-				}
-
-				++file_offset;
+				txtbuf_index_lines(&tix->txtbuf, tix);
 			}
 		}
 
@@ -1026,7 +945,7 @@ static unsigned long WINAPI render_run(void *param)
 			// =============================================================================
 			// Shaping
 			// =============================================================================
-			if (line->contains_complex_chars) {
+			if (line && line->contains_complex_chars) {
 				// Sometimes multiple runes are merged into one grapheme
 			}
 

@@ -10,20 +10,20 @@
  *
  * @param path The full path to the file.
  * @param arena Arena to allocate memory to read into
- * @param buf Reading result
+ * @param result Reading result
  * @return ErrCode Error information
  */
-ErrCode sys_file_read(const char *path, Arena *arena, MemBuf *buf);
+ErrCode sys_file_read(const char *path, Arena *arena, MemBuf *result);
 
 /**
  * @brief Reads a chunk of a file
  *
  * @param path The full path to the file.
- * @param buf Buffer to read into
  * @param chunk_size Size of the reading chunk
+ * @param result Buffer to read into
  * @return ErrCode Error information
  */
-ErrCode sys_file_read_chunk(const char *path, MemBuf *buf, uint32_t chunk_size);
+ErrCode sys_file_read_chunk(const char *path, uint32_t chunk_size, MemBuf *result);
 
 /**
  * @brief Gets the size of a file

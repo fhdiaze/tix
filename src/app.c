@@ -434,18 +434,20 @@ inline static TxtPos txtbuf_next_pos(const TxtBuf *const buf, const TxtPos pos)
 	return result;
 }
 
-inline static Line *txtbuf_push_line(Tix *tix, TxtBuf *buf)
+inline static Line *txtbuf_push_line(TxtBuf *buf, Tix *tix)
 {
 	Line *result = pool_push_zero(&tix->lines_pool);
 
-	if (buf->tail) {
-		buf->tail->next = result;
-		buf->tail = result;
-	} else {
-		buf->head = result;
-		buf->tail = result;
+	if (result) {
+		if (buf->tail) {
+			buf->tail->next = result;
+			buf->tail = result;
+		} else {
+			buf->head = result;
+			buf->tail = result;
+		}
+		++buf->lines_count;
 	}
-	++buf->lines_count;
 
 	return result;
 }
@@ -604,6 +606,94 @@ inline static TxtPos txtbuf_last_caretable_pos(TxtBuf *buf, size_t line_idx)
 	}
 
 	return result;
+}
+
+static ErrCode txtbuf_index_lines(TxtBuf *buf, Tix *tix)
+{
+	ErrCode error = {};
+
+	buf->lines_count = 0;
+
+	// TODO(fredy): should it be a circular buffer?
+	static uint8_t overhang_mask[64] = {
+		255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,
+		255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+		0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
+	};
+
+	size_t file_offset = 0;
+
+	__m256i newline_needle = _mm256_set1_epi8('\n');
+	__m256i complex_mask = _mm256_set1_epi8((char)0x80);
+	size_t line_offset = 0;
+
+	while (file_offset < buf->file.size) {
+		Line *line = txtbuf_push_line(buf, tix);
+		if (!line) {
+			error = ERR_CODE_FAILED;
+			ASSERT(false && "No room for more lines");
+			break;
+		}
+		__m256i contains_complex = _mm256_setzero_si256();
+
+		while (file_offset + 32 < buf->file.size) {
+			__m256i batch = _mm256_loadu_si256((__m256i *)((buf->file.buf) + file_offset));
+
+			__m256i test_newline = _mm256_cmpeq_epi8(batch, newline_needle);
+			__m256i test_complex = _mm256_and_si256(batch, complex_mask);
+
+			uint32_t newline_detected = (uint32_t)_mm256_movemask_epi8(test_newline);
+
+			if (newline_detected) {
+				uint32_t first_newline_idx = 0;
+				uint_ctz(newline_detected, &first_newline_idx);
+
+				__m256i mask_complex = _mm256_loadu_si256((__m256i *)(overhang_mask + 32 - first_newline_idx));
+
+				test_complex = _mm256_and_si256(test_complex, mask_complex);
+				contains_complex = _mm256_or_si256(contains_complex, test_complex);
+
+				line->contains_complex_chars |= (uint8_t)!_mm256_testz_si256(contains_complex, contains_complex);
+
+				file_offset += first_newline_idx;
+
+				break;
+			}
+
+			contains_complex = _mm256_or_si256(contains_complex, test_complex);
+
+			file_offset += 32;
+		}
+
+		ASSERT(file_offset < buf->file.size);
+		uint32_t is_newline = ((char *)(buf->file.buf))[file_offset] == '\n';
+		uint32_t is_last_byte = file_offset + 1 == buf->file.size;
+		if (is_newline || is_last_byte) {
+			ASSERT(buf->lines_count < LINES_COUNT_MAX);
+
+			line->file_offset = line_offset;
+			line->size = file_offset ? file_offset - line_offset + 1 : 0;
+
+			line_offset = file_offset + 1;
+
+			if (is_newline && is_last_byte) {
+				line = txtbuf_push_line(buf, tix);
+				if (!line) {
+					error = ERR_CODE_FAILED;
+					ASSERT(false && "No room for more lines");
+					break;
+				}
+				line->file_offset = line_offset;
+				line->size = 0;
+			}
+		} else if (((char *)(buf->file.buf))[file_offset] < 0) {
+			line->contains_complex_chars = 1U;
+		}
+
+		++file_offset;
+	}
+
+	return error;
 }
 
 static ErrCode txtbuf_read_file(TxtBuf *buf, Tix *tix, const char *const path)
