@@ -718,4 +718,5 @@ static void tix_init(Tix *tix)
 	arena_init(&tix->renderer_arena, sizeof(tix->renderer_buf), tix->renderer_buf);
 
 	tix->view.buf = &tix->txtbuf;
+	tix->
 }
