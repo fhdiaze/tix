@@ -255,6 +255,7 @@ typedef struct Tile {
 typedef struct Line Line;
 typedef struct Line {
 	Line *next;
+	size_t idx;
 	size_t file_offset;
 	size_t size;
 	uint8_t contains_complex_chars;
@@ -389,18 +390,34 @@ inline static uint32_t txtpos_are_equal(const TxtPos *const one, const TxtPos *c
 	return result;
 }
 
-inline static Line *txtbuf_get_line(const TxtBuf *const buf, const size_t line_idx)
+inline static size_t txtbuf_hash_slot(size_t line_idx)
 {
-	Line *result = buf->head;
+	size_t hash_value = line_idx * 19 + line_idx * 7 + line_idx * 3;
+	size_t hash_slot_idx = hash_value % LINES_COUNT_MAX;
 
-	for (size_t i = 0; i < buf->lines_count && i <= line_idx; ++i) {
-		result = result->next;
-	}
+	return hash_slot_idx;
+}
+
+inline static Line *txtbuf_get_line(const TxtBuf *const buf, const size_t line_idx, Tix *tix)
+{
+	Line *result = {};
+	size_t hash_slot_idx = txtbuf_hash_slot(line_idx);
+	ASSERT(hash_slot_idx < LINES_COUNT_MAX);
+
+	do {
+		if (result->idx == line_idx) {
+			break;
+		}
+
+		++hash_slot_idx;
+	} while (hash_slot_idx < buf->lines_count);
+
+	result = &tix->lines_buf[hash_slot_idx];
 
 	return result;
 }
 
-inline static TxtPos txtbuf_prev_pos(TxtBuf *buf, TxtPos pos)
+inline static TxtPos txtbuf_prev_pos(TxtBuf *buf, TxtPos pos, Tix *tix)
 {
 	TxtPos prev_pos = pos;
 
@@ -408,7 +425,7 @@ inline static TxtPos txtbuf_prev_pos(TxtBuf *buf, TxtPos pos)
 		--prev_pos.col_idx;
 	} else if (prev_pos.line_idx > 0) {
 		--prev_pos.line_idx;
-		Line *prev_line = txtbuf_get_line(buf, prev_pos.line_idx);
+		Line *prev_line = txtbuf_get_line(buf, prev_pos.line_idx, tix);
 		ASSERT(prev_line->size > 0);
 		prev_pos.col_idx = prev_line->size - 1;
 	}
@@ -416,11 +433,11 @@ inline static TxtPos txtbuf_prev_pos(TxtBuf *buf, TxtPos pos)
 	return prev_pos;
 }
 
-inline static TxtPos txtbuf_next_pos(const TxtBuf *const buf, const TxtPos pos)
+inline static TxtPos txtbuf_next_pos(const TxtBuf *const buf, const TxtPos pos, Tix *tix)
 {
 	TxtPos result = pos;
 
-	Line *line = txtbuf_get_line(buf, pos.line_idx);
+	Line *line = txtbuf_get_line(buf, pos.line_idx, tix);
 	ASSERT(line);
 	if (pos.line_idx < buf->lines_count) {
 		if (pos.col_idx + 1 < line->size) {
@@ -452,11 +469,11 @@ inline static Line *txtbuf_push_line(TxtBuf *buf, Tix *tix)
 	return result;
 }
 
-inline static Rune txtbuf_get_rune(TxtBuf *buf, TxtPos pos)
+inline static Rune txtbuf_get_rune(TxtBuf *buf, TxtPos pos, Tix *tix)
 {
 	Rune result = {};
 
-	Line *line = txtbuf_get_line(buf, pos.line_idx);
+	Line *line = txtbuf_get_line(buf, pos.line_idx, tix);
 
 	if (line && line->size > 0) {
 		ASSERT(pos.col_idx < line->size);
@@ -468,11 +485,11 @@ inline static Rune txtbuf_get_rune(TxtBuf *buf, TxtPos pos)
 	return result;
 }
 
-static RuneFlags txtbuf_get_rune_flags(TxtBuf *buf, TxtPos *pos, Rune rune)
+static RuneFlags txtbuf_get_rune_flags(TxtBuf *buf, TxtPos *pos, Rune rune, Tix *tix)
 {
 	RuneFlags rune_flags = {};
 
-	Line *line = txtbuf_get_line(buf, pos->line_idx);
+	Line *line = txtbuf_get_line(buf, pos->line_idx, tix);
 	ASSERT(line);
 	if (rune.value == '\n') {
 		rune_flags |= RUNE_FLAG_BLANK;
@@ -520,12 +537,12 @@ inline static RuneFlag rune_get_flag(RuneFlags flags, RuneFlag flag)
 }
 
 inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(TxtBuf *buf, Rune src_rune, TxtPos *src_pos,
-                                                                   Rune dst_rune, TxtPos *dst_pos)
+                                                                   Rune dst_rune, TxtPos *dst_pos, Tix *tix)
 {
 	RuneTransitionFlags flags = {};
 
-	RuneFlags src_rune_flags = txtbuf_get_rune_flags(buf, src_pos, src_rune);
-	RuneFlags dst_rune_flags = txtbuf_get_rune_flags(buf, dst_pos, dst_rune);
+	RuneFlags src_rune_flags = txtbuf_get_rune_flags(buf, src_pos, src_rune, tix);
+	RuneFlags dst_rune_flags = txtbuf_get_rune_flags(buf, dst_pos, dst_rune, tix);
 
 	if (rune_get_flag(src_rune_flags, RUNE_FLAG_CARETABLE)) {
 		if (!rune_get_flag(dst_rune_flags, RUNE_FLAG_CARETABLE)) {
@@ -543,7 +560,7 @@ inline static RuneTransitionFlags txtbuf_get_rune_transition_flags(TxtBuf *buf, 
 		}
 	}
 
-	Line *dst_line = txtbuf_get_line(buf, dst_pos->line_idx);
+	Line *dst_line = txtbuf_get_line(buf, dst_pos->line_idx, tix);
 	ASSERT(dst_line);
 	if (dst_pos->col_idx == 0 && (dst_rune.value == '\n' || dst_rune.value == '\r' || dst_line->size == 0)) {
 		flags |= RUNE_TRANSITION_FLAG_ANY_TO_EMPTYLINE;
@@ -583,18 +600,18 @@ inline static RuneTransitionFlag rune_transition_get_flag(RuneTransitionFlags fl
 	return result;
 }
 
-inline static TxtPos txtbuf_last_caretable_pos(TxtBuf *buf, size_t line_idx)
+inline static TxtPos txtbuf_last_caretable_pos(TxtBuf *buf, size_t line_idx, Tix *tix)
 {
 	TxtPos result = { .line_idx = line_idx, .col_idx = 0 };
-	Line *line = txtbuf_get_line(buf, line_idx);
+	Line *line = txtbuf_get_line(buf, line_idx, tix);
 	ASSERT(line);
 	size_t line_size = line->size;
 	if (line_size > 0) {
 		result.col_idx = line_size - 1;
 
 		while (result.col_idx > 0) {
-			Rune dst_rune = txtbuf_get_rune(buf, result);
-			RuneFlags flags = txtbuf_get_rune_flags(buf, &result, dst_rune);
+			Rune dst_rune = txtbuf_get_rune(buf, result, tix);
+			RuneFlags flags = txtbuf_get_rune_flags(buf, &result, dst_rune, tix);
 			if (!rune_get_flag(flags, RUNE_FLAG_CARETABLE)) {
 				--result.col_idx;
 			} else {
@@ -718,5 +735,4 @@ static void tix_init(Tix *tix)
 	arena_init(&tix->renderer_arena, sizeof(tix->renderer_buf), tix->renderer_buf);
 
 	tix->view.buf = &tix->txtbuf;
-	tix->
 }

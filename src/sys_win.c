@@ -713,17 +713,17 @@ static unsigned long WINAPI render_run(void *param)
 
 			for (;;) {
 				src_pos = dst_pos;
-				dst_pos = txtbuf_prev_pos(&tix->txtbuf, src_pos);
+				dst_pos = txtbuf_prev_pos(&tix->txtbuf, src_pos, tix);
 
 				if (txtpos_are_equal(&src_pos, &dst_pos)) {
 					break;
 				}
 
-				Rune src_rune = txtbuf_get_rune(&tix->txtbuf, src_pos);
-				Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos);
+				Rune src_rune = txtbuf_get_rune(&tix->txtbuf, src_pos, tix);
+				Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos, tix);
 
 				RuneTransitionFlags transition_flags =
-					txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos);
+					txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos, tix);
 
 				if (!was_word_started &&
 				    (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_NONBLANK) ||
@@ -748,17 +748,17 @@ static unsigned long WINAPI render_run(void *param)
 			TxtPos dst_pos = tix->view.caret.pos;
 			for (;;) {
 				src_pos = dst_pos;
-				dst_pos = txtbuf_next_pos(&tix->txtbuf, src_pos);
+				dst_pos = txtbuf_next_pos(&tix->txtbuf, src_pos, tix);
 
 				if (txtpos_are_equal(&src_pos, &dst_pos)) {
 					break;
 				}
 
-				Rune src_rune = txtbuf_get_rune(&tix->txtbuf, src_pos);
-				Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos);
+				Rune src_rune = txtbuf_get_rune(&tix->txtbuf, src_pos, tix);
+				Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos, tix);
 
 				RuneTransitionFlags transition_flags =
-					txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos);
+					txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos, tix);
 
 				if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_CARETABLE)) {
 					tix->view.caret.pos = dst_pos;
@@ -781,17 +781,17 @@ static unsigned long WINAPI render_run(void *param)
 
 				for (;;) {
 					src_pos = dst_pos;
-					dst_pos = txtbuf_prev_pos(&tix->txtbuf, src_pos);
+					dst_pos = txtbuf_prev_pos(&tix->txtbuf, src_pos, tix);
 
 					if (txtpos_are_equal(&src_pos, &dst_pos)) {
 						break;
 					}
 
-					Rune src_rune = txtbuf_get_rune(&tix->txtbuf, src_pos);
-					Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos);
+					Rune src_rune = txtbuf_get_rune(&tix->txtbuf, src_pos, tix);
+					Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos, tix);
 
 					RuneTransitionFlags transition_flags =
-						txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos);
+						txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos, tix);
 
 					if (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_CARETABLE)) {
 						tix->view.caret.pos = dst_pos;
@@ -811,17 +811,17 @@ static unsigned long WINAPI render_run(void *param)
 
 				for (;;) {
 					src_pos = dst_pos;
-					dst_pos = txtbuf_next_pos(&tix->txtbuf, src_pos);
+					dst_pos = txtbuf_next_pos(&tix->txtbuf, src_pos, tix);
 
 					if (txtpos_are_equal(&src_pos, &dst_pos)) {
 						break;
 					}
 
-					Rune src_rune = txtbuf_get_rune(&tix->txtbuf, src_pos);
-					Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos);
+					Rune src_rune = txtbuf_get_rune(&tix->txtbuf, src_pos, tix);
+					Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos, tix);
 
 					RuneTransitionFlags transition_flags =
-						txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos);
+						txtbuf_get_rune_transition_flags(&tix->txtbuf, src_rune, &src_pos, dst_rune, &dst_pos, tix);
 
 					if (!was_word_started &&
 					    (rune_transition_get_flag(transition_flags, RUNE_TRANSITION_FLAG_ANY_TO_NONBLANK) ||
@@ -853,12 +853,12 @@ static unsigned long WINAPI render_run(void *param)
 			tix->view.caret.wanted_col_idx = tix->view.caret.pos.col_idx;
 		}
 
-		Line *caret_line = txtbuf_get_line(&tix->txtbuf, tix->view.caret.pos.line_idx);
+		Line *caret_line = txtbuf_get_line(&tix->txtbuf, tix->view.caret.pos.line_idx, tix);
 		if (tix_input.keys[KEY_CODE_L].ended_down) {
 			if (tix->view.caret.pos.col_idx + 1 < caret_line->size) {
-				TxtPos dst_pos = txtbuf_next_pos(&tix->txtbuf, tix->view.caret.pos);
-				Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos);
-				RuneFlags flags = txtbuf_get_rune_flags(&tix->txtbuf, &dst_pos, dst_rune);
+				TxtPos dst_pos = txtbuf_next_pos(&tix->txtbuf, tix->view.caret.pos, tix);
+				Rune dst_rune = txtbuf_get_rune(&tix->txtbuf, dst_pos, tix);
+				RuneFlags flags = txtbuf_get_rune_flags(&tix->txtbuf, &dst_pos, dst_rune, tix);
 				if (rune_get_flag(flags, RUNE_FLAG_CARETABLE)) {
 					++tix->view.caret.pos.col_idx;
 				}
@@ -885,7 +885,7 @@ static unsigned long WINAPI render_run(void *param)
 		}
 
 		if (tix_input.keys[KEY_CODE_DOLLAR].ended_down) {
-			tix->view.caret.pos = txtbuf_last_caretable_pos(&tix->txtbuf, tix->view.caret.pos.line_idx);
+			tix->view.caret.pos = txtbuf_last_caretable_pos(&tix->txtbuf, tix->view.caret.pos.line_idx, tix);
 			tix->view.caret.wanted_col_idx = CARET_WANTED_COL_IDX_END;
 		}
 
@@ -905,7 +905,7 @@ static unsigned long WINAPI render_run(void *param)
 			}
 
 			if (tix->view.caret.wanted_col_idx > caret_line->size) {
-				tix->view.caret.pos = txtbuf_last_caretable_pos(&tix->txtbuf, tix->view.caret.pos.line_idx);
+				tix->view.caret.pos = txtbuf_last_caretable_pos(&tix->txtbuf, tix->view.caret.pos.line_idx, tix);
 			} else {
 				tix->view.caret.pos.col_idx = tix->view.caret.wanted_col_idx;
 			}
@@ -937,7 +937,7 @@ static unsigned long WINAPI render_run(void *param)
 			size_t line_idx = tix->view.scroll_idx + tile_idx_y;
 			Line *line = {};
 			if (line_idx < tix->txtbuf.lines_count) {
-				line = txtbuf_get_line(&tix->txtbuf, line_idx);
+				line = txtbuf_get_line(&tix->txtbuf, line_idx, tix);
 			}
 			unsigned tile_min_y_px = tix->grid.tile_height_px * tile_idx_y;
 			AtlasIdx atlas_idx = {};
@@ -957,7 +957,7 @@ static unsigned long WINAPI render_run(void *param)
 				char tile_char = ' ';
 				uint32_t tile_min_x_px = tile_idx_x * tix->grid.tile_width_px;
 
-				if (tile_idx_x < line->size) {
+				if (line && tile_idx_x < line->size) {
 					char *file_chars = (char *)tix->txtbuf.file.buf;
 					size_t offset = line->file_offset + tile_idx_x;
 					ASSERT(offset < tix->txtbuf.file.size);
